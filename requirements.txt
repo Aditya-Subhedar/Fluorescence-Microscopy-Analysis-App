@@ -1,0 +1,6 @@
+czifile
+tifffile
+numpy
+opencv-python
+Pillow
+openpyxl  # Needed for Excel export

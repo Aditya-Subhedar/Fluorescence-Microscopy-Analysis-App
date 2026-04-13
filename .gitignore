@@ -1,0 +1,27 @@
+# --- Neuro-Engineering Internship Data Exclusion ---
+# Excludes raw input images and final generated output (Excel/Images)
+IHC input images/
+output_results/
+
+# Excludes private branding asset
+logo.ico
+
+# --- Python Build and Runtime Artifacts ---
+# PyInstaller output
+build/
+dist/
+*.spec
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Environments ---
+# Python virtual environment
+venv/
+.venv/
+
+# --- OS Specific Files ---
+.DS_Store
+Thumbs.db
