@@ -191,23 +191,19 @@ class PreProcessingTab(ttk.Frame):
         self.entry_sb_width.insert(0, "100") 
         
         self.spin_sb_thick = tk.Spinbox(self.hidden_sb_frame, from_=1, to=100)
-        self.spin_sb_thick.delete(0, tk.END); self.spin_sb_thick.insert(0, "2")
+        self.spin_sb_thick.delete(0, tk.END)
+        self.spin_sb_thick.insert(0, "2")
         
         self.spin_sb_font = tk.Spinbox(self.hidden_sb_frame, from_=0.1, to=5.0, increment=0.1)
-        self.spin_sb_font.delete(0, tk.END); self.spin_sb_font.insert(0, "1.0")
-        
-        self.combo_sb_color = ttk.Combobox(self.hidden_sb_frame, values=["White", "Black", "Red", "Green", "Blue", "Yellow"])
-        self.combo_sb_color.set("White")
-
-        self.spin_sb_font = tk.Spinbox(self.hidden_sb_frame, from_=0.1, to=5.0, increment=0.1)
-        self.spin_sb_font.delete(0, tk.END); self.spin_sb_font.insert(0, "0.5")
+        self.spin_sb_font.delete(0, tk.END)
+        self.spin_sb_font.insert(0, "0.5")
         
         self.combo_sb_color = ttk.Combobox(self.hidden_sb_frame, values=["White", "Black", "Red", "Green", "Blue", "Yellow"])
         self.combo_sb_color.set("White")
         
         # ---> NEW: Hidden combobox to store position <---
         self.combo_sb_position = ttk.Combobox(self.hidden_sb_frame, values=["Bottom Right", "Bottom Left", "Top Right", "Top Left"])
-        self.combo_sb_position.set("Bottom Right")
+        self.combo_sb_position.set("Bottom Left")
         # ---------------------------------------------------
 
         # Right Panel: Canvas
@@ -400,44 +396,58 @@ class PreProcessingTab(ttk.Frame):
     def stamp_scale_bar_for_export(self, image_rgb):
         """Burns a physical scale bar into the numpy image array using OpenCV at a specified position."""
         try:
+            # 1. ABORT IF SCALE BAR IS UNCHECKED
+            if not getattr(self, 'var_show_scalebar', None) or not self.var_show_scalebar.get():
+                return image_rgb 
+                
+            # 2. FETCH ALL USER SETTINGS FROM UI
             try:
                 pixel_size_um = float(self.entry_pixel_size.get())
+                user_width_um = float(self.entry_sb_width.get())
+                bar_thickness = int(self.spin_sb_thick.get())
+                font_scale = float(self.spin_sb_font.get())
+                color_name = self.combo_sb_color.get()
+                position = self.combo_sb_position.get()
             except (ValueError, AttributeError):
                 return image_rgb 
 
-            if pixel_size_um <= 0: return image_rgb
+            if pixel_size_um <= 0 or user_width_um <= 0: 
+                return image_rgb
                 
+            import cv2
+            import numpy as np
+
             img_h, img_w = image_rgb.shape[:2]
             
-            import math
-            target_bar_um = (img_w * pixel_size_um) * 0.15 
-            magnitude = 10 ** math.floor(math.log10(max(1, target_bar_um)))
-            scale_length_um = round(target_bar_um / magnitude) * magnitude
-            
-            bar_length_px = int(scale_length_um / pixel_size_um)
-            
+            # 3. CALCULATE EXACT PIXEL LENGTH (No more 15% auto-math)
+            bar_length_px = int(user_width_um / pixel_size_um)
             margin = int(max(10, img_w * 0.02)) 
-            bar_thickness = max(4, int(img_h * 0.008))
             
-            # Pre-calculate text size so we know how much room to leave at the top
-            text = f"{int(scale_length_um)} um"
+            # Format text (Note: OpenCV doesn't render the Greek µ symbol well, so we use 'um')
+            text_val = int(user_width_um) if float(user_width_um).is_integer() else round(user_width_um, 2)
+            text = f"{text_val} um"
+            
+            # Setup Font
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = max(0.5, img_w / 1200.0)
-            text_thickness = max(1, int(font_scale * 2))
-            (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, text_thickness)
+            cv_font_scale = font_scale * 2.0 # Scaled up slightly to match Tkinter proportions
+            text_thickness = max(1, int(cv_font_scale * 2))
+            (text_w, text_h), _ = cv2.getTextSize(text, font, cv_font_scale, text_thickness)
             
-            # ---> NEW: Position Logic <---
-            position = self.combo_sb_position.get()
-            
-            # Determine X Coordinate
+            # 4. COLOR MAPPING (RGB format)
+            color_map = {
+                "White": (255, 255, 255), "Black": (0, 0, 0), "Red": (255, 0, 0), 
+                "Green": (0, 255, 0), "Blue": (0, 0, 255), "Yellow": (255, 255, 0)
+            }
+            bar_color = color_map.get(color_name, (255, 255, 255))
+            outline_color = (0, 0, 0) if color_name in ["White", "Yellow", "Green"] else (255, 255, 255)
+
+            # 5. DETERMINE X/Y COORDINATES
             if "Left" in position:
                 bar_x = margin
             else: # Right
                 bar_x = img_w - margin - bar_length_px
                 
-            # Determine Y Coordinate
             if "Top" in position:
-                # Push the bar down so the text fits above it
                 bar_y = margin + int(text_h * 1.5)
             else: # Bottom
                 bar_y = img_h - margin - bar_thickness
@@ -445,17 +455,19 @@ class PreProcessingTab(ttk.Frame):
             start_point = (bar_x, bar_y)
             end_point = (bar_x + bar_length_px, bar_y + bar_thickness)
             
-            # Draw the bar
-            cv2.rectangle(image_rgb, start_point, end_point, (255, 255, 255), -1)
-            cv2.rectangle(image_rgb, start_point, end_point, (0, 0, 0), 1) 
+            # Draw Outline/Shadow for bar
+            cv2.rectangle(image_rgb, (bar_x-1, bar_y-1), (end_point[0]+1, end_point[1]+1), outline_color, -1)
+            # Draw Foreground bar
+            cv2.rectangle(image_rgb, start_point, end_point, bar_color, -1) 
             
             # Center the text over the bar dynamically
             text_x = bar_x + (bar_length_px // 2) - (text_w // 2)
             text_y = bar_y - int(text_h * 0.5)
             
-            # Draw the text
-            cv2.putText(image_rgb, text, (text_x, text_y), font, font_scale, (0, 0, 0), text_thickness + 2, cv2.LINE_AA)
-            cv2.putText(image_rgb, text, (text_x, text_y), font, font_scale, (255, 255, 255), text_thickness, cv2.LINE_AA)
+            # Draw Text shadow/outline
+            cv2.putText(image_rgb, text, (text_x, text_y), font, cv_font_scale, outline_color, text_thickness + 2, cv2.LINE_AA)
+            # Draw Text foreground
+            cv2.putText(image_rgb, text, (text_x, text_y), font, cv_font_scale, bar_color, text_thickness, cv2.LINE_AA)
             
             return image_rgb
             
