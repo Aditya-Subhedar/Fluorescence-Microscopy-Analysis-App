@@ -19,7 +19,7 @@ from tab2_quantification import QuantificationTab
 class NeuroQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("NeuroQuant V3: Complete Workflow")
+        self.root.title("NeuroQuant Version 9")
         self.root.geometry("1400x900") # Adjust default size as needed
         
         # Load the Icon safely using the resource_path function
@@ -37,7 +37,7 @@ class NeuroQuantApp:
 
         # Initialize and add Tab 2
         self.tab2 = QuantificationTab(self.notebook)
-        self.notebook.add(self.tab2, text="2. NeuroQuant Analysis")
+        self.notebook.add(self.tab2, text="2. Image Analysis")
 
 if __name__ == "__main__":
     root = tk.Tk()

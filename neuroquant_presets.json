@@ -1,0 +1,142 @@
+{
+    "collection": {
+        "DAPI - 10x (Nuclei)": {
+            "hue": [
+                100,
+                135
+            ],
+            "intensity": [
+                40,
+                255
+            ],
+            "area": [
+                20,
+                200
+            ],
+            "circularity": 65
+        },
+        "GFP - 10x (Cells)": {
+            "hue": [
+                40,
+                85
+            ],
+            "intensity": [
+                30,
+                255
+            ],
+            "area": [
+                50,
+                401
+            ],
+            "circularity": 15
+        },
+        "mCherry/RFP - 10x (Cells)": {
+            "hue": [
+                160,
+                179
+            ],
+            "intensity": [
+                30,
+                255
+            ],
+            "area": [
+                50,
+                401
+            ],
+            "circularity": 15
+        },
+        "FITC - 10x (Puncta)": {
+            "hue": [
+                40,
+                85
+            ],
+            "intensity": [
+                120,
+                255
+            ],
+            "area": [
+                0,
+                150
+            ],
+            "circularity": 60
+        },
+        "DAPI - 20x (Nuclei)": {
+            "hue": [
+                100,
+                135
+            ],
+            "intensity": [
+                40,
+                255
+            ],
+            "area": [
+                60,
+                602
+            ],
+            "circularity": 70
+        },
+        "GFP - 20x (Cells)": {
+            "hue": [
+                40,
+                85
+            ],
+            "intensity": [
+                30,
+                255
+            ],
+            "area": [
+                200,
+                1000
+            ],
+            "circularity": 15
+        },
+        "mCherry/RFP - 20x (Cells)": {
+            "hue": [
+                160,
+                179
+            ],
+            "intensity": [
+                30,
+                255
+            ],
+            "area": [
+                200,
+                1000
+            ],
+            "circularity": 15
+        },
+        "FITC - 20x (Puncta)": {
+            "hue": [
+                40,
+                85
+            ],
+            "intensity": [
+                120,
+                255
+            ],
+            "area": [
+                16,
+                200
+            ],
+            "circularity": 60
+        },
+        "a1": {
+            "hue": [
+                25,
+                76
+            ],
+            "intensity": [
+                65,
+                255
+            ],
+            "area": [
+                137,
+                1000
+            ],
+            "circularity": 21
+        }
+    },
+    "pinned": [
+        "a1"
+    ]
+}
