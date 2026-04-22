@@ -19,7 +19,7 @@ from tab2_quantification import QuantificationTab
 class NeuroQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("NeuroQuant Version 9")
+        self.root.title("CytoQuant Version 10")
         self.root.geometry("1400x900") # Adjust default size as needed
         
         # Load the Icon safely using the resource_path function

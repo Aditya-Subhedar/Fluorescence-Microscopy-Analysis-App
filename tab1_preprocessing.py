@@ -110,15 +110,26 @@ class PreProcessingTab(ttk.Frame):
         tk.Button(crop_frame, text="✂ Crop to Selection", command=self.apply_crop, bg="#f39c12", fg="white").pack(fill=tk.X, pady=2)
         tk.Button(crop_frame, text="🔄 Reset Original Image", command=self.reset_crop).pack(fill=tk.X, pady=2)
 
-        # Channels
-        chan_frame = tk.LabelFrame(control_frame, text="Channel Visibility", padx=10, pady=5)
+        # ---------------------------------------------------------
+        # Channel Visibility
+        # ---------------------------------------------------------
+        chan_frame = tk.LabelFrame(control_frame, text="Channel Visibility & Pseudo-Color", padx=10, pady=5)
         chan_frame.pack(fill=tk.X, pady=2)
+        
         self.var_ch_r = tk.BooleanVar(value=True)
         self.var_ch_g = tk.BooleanVar(value=True)
         self.var_ch_b = tk.BooleanVar(value=True)
-        tk.Checkbutton(chan_frame, text="Alexa Fluor 568 (Red)", variable=self.var_ch_r, fg="red", command=self.update_preview).pack(anchor="w")
-        tk.Checkbutton(chan_frame, text="Alexa Fluor 488 (Green)", variable=self.var_ch_g, fg="green", command=self.update_preview).pack(anchor="w")
-        tk.Checkbutton(chan_frame, text="DAPI (Blue)", variable=self.var_ch_b, fg="blue", command=self.update_preview).pack(anchor="w")
+
+        # Variables to store the actual RGB tuples for rendering/blending
+        self.color_r = (255, 0, 0)   # Default Pure Red
+        self.color_g = (0, 255, 0)   # Default Pure Green
+        self.color_b = (0, 0, 255)   # Default Pure Blue
+
+        # Build the three rows and store the UI elements as class attributes 
+        # so self.pick_color() can access and update them later.
+        self.btn_color_r, self.lbl_ch_r = self.create_channel_row(chan_frame, "Alexa Fluor 568 (Red)", self.var_ch_r, "R", "#FF0000")
+        self.btn_color_g, self.lbl_ch_g = self.create_channel_row(chan_frame, "Alexa Fluor 488 (Green)", self.var_ch_g, "G", "#00FF00")
+        self.btn_color_b, self.lbl_ch_b = self.create_channel_row(chan_frame, "DAPI (Blue)", self.var_ch_b, "B", "#0000FF")
 
         # ---------------------------------------------------------
         # Channel Adjustments (Compact)
@@ -247,6 +258,51 @@ class PreProcessingTab(ttk.Frame):
         # Call your existing image update function!
         # (Change this to self.update_preview() if that's what Tab 1 uses)
         self.on_slider_move()
+
+    # --- Pseudo Coloring Color Picker ---
+    def pick_color(self, channel_id):
+        """Opens a color picker and updates the specific channel's color block."""
+        from tkinter import colorchooser
+        
+        initial = {"R": self.color_r, "G": self.color_g, "B": self.color_b}[channel_id]
+        color_result = colorchooser.askcolor(title=f"Select Color for Channel {channel_id}", color=initial)
+        
+        if color_result[0] is not None:
+            rgb_tuple = tuple(int(c) for c in color_result[0])
+            hex_color = color_result[1]
+            
+            # Only update the button background now!
+            if channel_id == "R":
+                self.color_r = rgb_tuple
+                self.btn_color_r.config(bg=hex_color)
+            elif channel_id == "G":
+                self.color_g = rgb_tuple
+                self.btn_color_g.config(bg=hex_color)
+            elif channel_id == "B":
+                self.color_b = rgb_tuple
+                self.btn_color_b.config(bg=hex_color)
+                
+            self.update_preview()
+
+    def create_channel_row(self, parent, text, var, channel_id, default_hex):
+        """Helper to build a clean row with Checkbox + Color Button."""
+        import tkinter as tk
+        row = tk.Frame(parent)
+        row.pack(fill=tk.X, pady=2)
+        
+        cb = tk.Checkbutton(row, variable=var, command=self.update_preview)
+        cb.pack(side=tk.LEFT)
+        
+        # Text remains standard black
+        lbl = tk.Label(row, text=text, fg="black")
+        lbl.pack(side=tk.LEFT)
+        
+        # The color block does all the visual communication
+        btn = tk.Button(row, bg=default_hex, width=3, relief="raised", cursor="hand2", 
+                        command=lambda: self.pick_color(channel_id))
+        btn.pack(side=tk.RIGHT, padx=5)
+        
+        return btn, lbl
 
     # --- Scale bar functions ---
     def open_scale_bar_options(self):
@@ -855,31 +911,23 @@ class PreProcessingTab(ttk.Frame):
 
     # --- Processing ---
     def apply_image_math(self, image_multi):
+        """Processes contrast and brightness for each channel, then sends to blender."""
+        import numpy as np
         h, w, c_total = image_multi.shape
-        blended = np.zeros((h, w, 3), dtype=np.float32)
         
         # --- READ FROM COMPACT UI DICTIONARY ---
-        c_b = self.adj_data["Blue (DAPI)"]["c"]
-        b_b = self.adj_data["Blue (DAPI)"]["b"]
-        
-        c_g = self.adj_data["Green (Alexa 488)"]["c"]
-        b_g = self.adj_data["Green (Alexa 488)"]["b"]
-        
-        c_r = self.adj_data["Red (Alexa 568)"]["c"]
-        b_r = self.adj_data["Red (Alexa 568)"]["b"]
-
-        # --- DYNAMIC CHANNEL MAPPING ---
-        # Thanks to stack_rgb_image, we KNOW the array is strictly: 0=Red, 1=Green, 2=Blue
-        channel_settings = [
-            ((255, 0, 0), self.var_ch_r.get(), c_r, b_r),  # Index 0 gets painted RED
-            ((0, 255, 0), self.var_ch_g.get(), c_g, b_g),  # Index 1 gets painted GREEN
-            ((0, 0, 255), self.var_ch_b.get(), c_b, b_b)   # Index 2 gets painted BLUE
+        channel_params = [
+            (self.adj_data["Red (Alexa 568)"]["c"], self.adj_data["Red (Alexa 568)"]["b"], self.var_ch_r.get()),
+            (self.adj_data["Green (Alexa 488)"]["c"], self.adj_data["Green (Alexa 488)"]["b"], self.var_ch_g.get()),
+            (self.adj_data["Blue (DAPI)"]["c"], self.adj_data["Blue (DAPI)"]["b"], self.var_ch_b.get())
         ]
         
-        # Additive Blending (Matches ImageJ "Composite" rendering)
-        for i, (color, is_visible, contrast, brightness) in enumerate(channel_settings):
-            # Skip if the user hid the channel or if the channel doesn't exist
+        processed_channels = []
+
+        for i, (contrast, brightness, is_visible) in enumerate(channel_params):
+            # If channel is hidden or doesn't exist, pass a blank black array
             if not is_visible or i >= c_total or i >= len(self.channel_baselines): 
+                processed_channels.append(np.zeros((h, w), dtype=np.float32))
                 continue
             
             ch_data = image_multi[:, :, i].astype(np.float32)
@@ -895,15 +943,34 @@ class PreProcessingTab(ttk.Frame):
             # 2. Apply individual Contrast and Brightness
             norm_ch = (norm_ch * contrast) + brightness
             norm_ch = np.clip(norm_ch, 0.0, 1.0)
-                
-            # 3. Apply color weighting and add to blended composite
-            blended[:, :, 0] += norm_ch * color[0] # Red
-            blended[:, :, 1] += norm_ch * color[1] # Green
-            blended[:, :, 2] += norm_ch * color[2] # Blue
             
-        blended = np.clip(blended, 0, 255).astype(np.uint8)
+            processed_channels.append(norm_ch)
 
-        return blended
+        # 3. Send the fully processed grayscale arrays to the pseudo-color blender
+        return self.apply_pseudo_colors(processed_channels[0], processed_channels[1], processed_channels[2])
+
+    def apply_pseudo_colors(self, norm_r, norm_g, norm_b):
+        """Blends 3 normalized grayscale arrays (0.0 to 1.0) using the chosen UI colors."""
+        import numpy as np
+        
+        h, w = norm_r.shape
+        blended = np.zeros((h, w, 3), dtype=np.float32)
+        
+        # Link the grayscale arrays to their dynamically chosen UI colors
+        layers = [
+            (norm_r, self.color_r),
+            (norm_g, self.color_g),
+            (norm_b, self.color_b)
+        ]
+        
+        # Additive Blending (Matches ImageJ "Composite" rendering)
+        for norm_ch, color in layers:
+            # color[0]=Red, color[1]=Green, color[2]=Blue
+            blended[:, :, 0] += norm_ch * color[0] 
+            blended[:, :, 1] += norm_ch * color[1] 
+            blended[:, :, 2] += norm_ch * color[2] 
+            
+        return np.clip(blended, 0, 255).astype(np.uint8)
     
     def on_z_slider_move(self, val=None):
         """Interrupts the Z-slider to break out of merge mode if it's active."""

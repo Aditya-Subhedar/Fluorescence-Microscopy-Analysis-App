@@ -31,7 +31,7 @@ Ensure you have Python 3.8+ installed.
 
 1.  **Clone this repository:**
     ```bash
-    git clone [https://github.com/your-username/fluorescence-microscopy-analysis-app.git](https://github.com/your-username/fluorescence-microscopy-analysis-app.git)
+    git clone [https://github.com/Aditya-Subhedar/Fluorescence-Microscopy-Analysis-App](https://github.com/your-username/fluorescence-microscopy-analysis-app.git)
     cd fluorescence-microscopy-analysis-app
     ```
 
