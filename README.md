@@ -23,7 +23,7 @@ This application provides a robust, efficient, and accurate alternative to manua
     * **Manual Pencil/Eraser:** For pixel-perfect correction of automated segmentation.
     * **Undo/Redo:** Full state history support for edit rollback.
     * **Clear Drawings:** Instantly reset manual corrections.
-* **Automatic Reporting:** Real-time display of **Fluorescent Area %** and **Cluster Counts**, with automated, structured export directly to Microsoft Excel.
+* **Automatic Reporting:** Real-time display of **Fluorescent Area %**, **Fluoroscent Area in sq microns** and **Cluster Counts**, with automated, structured export directly to Microsoft Excel and CSV formats.
 
 ## Setup & Installation
 
