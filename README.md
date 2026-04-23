@@ -10,7 +10,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 * **Robust File Support:** Robustly loads complex Zeiss CZI and multi-stack TIF files.
 * **Intelligent Dimension Correction:** Automatically resolves Z-slice/Color-Channel misalignment traps and unstitched mosaic issues inherent in raw python microscopy readers.
 * **Image Management:** Features a multi-image navigation bar supporting `askopenfilenames` (batch select) with keyboard arrow shortcut support (◀/▶) for streamlined workflow.
-* **Visual Balancing:** Real-time composite view with integrated standard color mapping, interactive cropping tools, and side-by-side Contrast/Brightness optimization optimized for high-resolution displays.
+* **Visual Balancing:** Real-time composite view with integrated standard color mapping, Pseudo Channel Coloring, interactive cropping tools, and side-by-side Contrast/Brightness optimization optimized for high-resolution displays.
 
 ### Tab 2: Automated & Manual Quantification
 * **Automated Segmentation:** Utilizes adaptive and Otsu's method thresholding for accurate object detection.
