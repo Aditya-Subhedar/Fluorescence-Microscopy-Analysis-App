@@ -15,12 +15,13 @@ def resource_path(relative_path):
 # Import your separated tabs!
 from tab1_preprocessing import PreProcessingTab
 from tab2_quantification import QuantificationTab
+from tab3_golgi import GolgiTab  # <-- NEW: Import the third tab
 
 class NeuroQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CytoQuant Version 10")
-        self.root.geometry("1400x900") # Adjust default size as needed
+        self.root.title("CytoQuant Version 12")
+        self.root.geometry("1920x1080") # Adjust default size as needed
         
         # Load the Icon safely using the resource_path function
         icon_path = resource_path("logo.ico")
@@ -33,11 +34,15 @@ class NeuroQuantApp:
 
         # Initialize and add Tab 1
         self.tab1 = PreProcessingTab(self.notebook, main_app=self)
-        self.notebook.add(self.tab1, text="1. Pre-Processing (CZI Layers/Channels)")
+        self.notebook.add(self.tab1, text="1. Pre-Processing (3D)       ")
 
         # Initialize and add Tab 2
         self.tab2 = QuantificationTab(self.notebook)
-        self.notebook.add(self.tab2, text="2. Image Analysis")
+        self.notebook.add(self.tab2, text="2. Image Analysis (2D)       ")
+
+        # Initialize and add Tab 3  <-- NEW
+        self.tab3 = GolgiTab(self.notebook)
+        self.notebook.add(self.tab3, text="3. Golgi Analysis (Beta)     ")
 
 if __name__ == "__main__":
     root = tk.Tk()

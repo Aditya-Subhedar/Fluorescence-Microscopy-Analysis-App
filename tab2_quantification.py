@@ -579,7 +579,7 @@ class QuantificationTab(ttk.Frame):
             }
 
             contours, _ = cv2.findContours(mask_filtered_area, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(overlay_rgb, contours, -1, (0, 255, 0), 2)
+            cv2.drawContours(overlay_rgb, contours, -1, (255, 255, 255), 2)
             
             # ---> 4. CRITICAL: Update the string format to include area_um2_str <---
             stats_meta = f"Fluorescent Area: {round(area_percentage, 2)}%{area_um2_str} | Clusters: {num_clusters}"
@@ -779,9 +779,9 @@ class QuantificationTab(ttk.Frame):
         if self.is_drawing:
             if not self.auto_detect_enabled:
                 self.auto_detect_enabled = True
-                self.btn_auto.config(text="Auto Detect: ON", fg="green")
+                self.btn_auto.config(text="Auto Detect: ON", fg="white")
                 
-            color = "green" if self.draw_mode == "pencil" else "red"
+            color = "white" if self.draw_mode == "pencil" else "white"
             
             # The visual line is drawn directly on the Tkinter canvas using raw mouse coords!
             self.canvas.create_line(self.last_x, self.last_y, event.x, event.y, fill=color, width=2, capstyle=tk.ROUND)

@@ -911,7 +911,7 @@ class PreProcessingTab(ttk.Frame):
 
     # --- Processing ---
     def apply_image_math(self, image_multi):
-        """Processes contrast and brightness for each channel, then sends to blender."""
+        """Processes contrast and brightness for each channel using ImageJ-style auto-scaling."""
         import numpy as np
         h, w, c_total = image_multi.shape
         
@@ -926,21 +926,26 @@ class PreProcessingTab(ttk.Frame):
 
         for i, (contrast, brightness, is_visible) in enumerate(channel_params):
             # If channel is hidden or doesn't exist, pass a blank black array
-            if not is_visible or i >= c_total or i >= len(self.channel_baselines): 
+            if not is_visible or i >= c_total: 
                 processed_channels.append(np.zeros((h, w), dtype=np.float32))
                 continue
             
             ch_data = image_multi[:, :, i].astype(np.float32)
             
-            b_min = self.channel_baselines[i]['min']
-            b_max = self.channel_baselines[i]['max']
-            val_range = (b_max - b_min) if (b_max - b_min) > 0 else 1.0
+            # --- THE FIX: ImageJ-Style Histogram Stretching ---
+            # Instead of using absolute min/max, we find the 1st and 99.9th percentiles.
+            # 1.0% cuts out the dark background noise floor.
+            # 99.9% cuts out extreme outlier "hot pixels" so they don't skew the scale.
+            p_min, p_max = np.percentile(ch_data, (1.0, 99.9))
             
-            # 1. Normalize channel based on 16-bit limits
-            norm_ch = (ch_data - b_min) / val_range
+            # Prevent division by zero if a channel is completely blank
+            val_range = (p_max - p_min) if (p_max - p_min) > 0 else 1.0
+            
+            # 1. Normalize specifically within this dense data range
+            norm_ch = (ch_data - p_min) / val_range
             norm_ch = np.clip(norm_ch, 0.0, 1.0)
             
-            # 2. Apply individual Contrast and Brightness
+            # 2. Apply manual UI Contrast and Brightness on top of the optimized base
             norm_ch = (norm_ch * contrast) + brightness
             norm_ch = np.clip(norm_ch, 0.0, 1.0)
             
