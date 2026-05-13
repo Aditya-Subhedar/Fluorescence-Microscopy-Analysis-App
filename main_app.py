@@ -17,7 +17,7 @@ from tab1_preprocessing import PreProcessingTab
 from tab2_quantification import QuantificationTab
 from tab3_golgi import GolgiTab  # <-- NEW: Import the third tab
 
-class NeuroQuantApp:
+class CytoQuantApp:
     def __init__(self, root):
         self.root = root
         self.root.title("CytoQuant Version 12")
@@ -33,7 +33,7 @@ class NeuroQuantApp:
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Initialize and add Tab 1
-        self.tab1 = PreProcessingTab(self.notebook, main_app=self)
+        self.tab1 = PreProcessingTab(self.notebook, self)
         self.notebook.add(self.tab1, text="1. Pre-Processing (3D)       ")
 
         # Initialize and add Tab 2
@@ -46,5 +46,5 @@ class NeuroQuantApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = NeuroQuantApp(root)
+    app = CytoQuantApp(root)
     root.mainloop()

@@ -6,12 +6,18 @@ from PIL import Image, ImageTk
 import os
 import czifile
 import tifffile
+import platform
 
 class PreProcessingTab(ttk.Frame):
     def __init__(self, parent, main_app):
+        # 1. Initialize the parent ttk.Frame cleanly with ONLY the parent widget
         super().__init__(parent)
-        self.main_app = main_app
         
+        # 2. Save custom application references safely
+        self.main_app = main_app
+        self.os_type = platform.system()
+        
+        # 3. Data Volumes
         self.original_raw_volume = None # Keeps the uncropped backup
         self.raw_volume = None      
         self.original_filename = ""
@@ -19,20 +25,33 @@ class PreProcessingTab(ttk.Frame):
         self.is_merged_preview = False
         self.channel_baselines = [] 
         
-        # 16-bit Adjustments (Global Only)
+        # 4. 16-bit Adjustments (Global Only)
         self.adj_settings = {'contrast': 1.0, 'brightness': 0.0}
         
-        # Cropping variables
+        # 5. Cropping and Image View Variables
         self.rect_id = None
         self.start_x = None
         self.start_y = None
         self.current_rect = None
+        
+        # 6. View State: Coordinates of the image top-left corner relative to canvas
         self.img_offset_x = 0
         self.img_offset_y = 0
-        self.img_scale = 1.0
+        self.img_scale = 1.0  # Dynamic zoom level factor
+        
+        # 7. Panning State: Mouse positioning caches for dragging actions
+        self.pan_start_x = 0
+        self.pan_start_y = 0
+        
+        # 8. Image References (Prevents Tkinter garbage collection)
+        self.current_pil_image = None
+        self.tk_img = None  # Matches self.tk_img used in update_preview / redraw_image
 
+        # 9. UI Orchestration
         self.setup_ui()
-        self.maximize_window()
+        if hasattr(self, 'maximize_window'):
+            self.maximize_window()
+
 
     def maximize_window(self):
         top = self.winfo_toplevel()
@@ -147,8 +166,7 @@ class PreProcessingTab(ttk.Frame):
         self._is_updating_ui = False # Flag to prevent feedback loops
         
         # Dropdown to select the channel (Uses PACK)
-        self.combo_channel = ttk.Combobox(adj_frame, textvariable=self.active_adj_channel, 
-                                          values=list(self.adj_data.keys()), state="readonly")
+        self.combo_channel = ttk.Combobox(adj_frame, textvariable=self.active_adj_channel, values=list(self.adj_data.keys()), state="readonly")
         self.combo_channel.pack(fill=tk.X, pady=(0, 5))
         self.combo_channel.bind("<<ComboboxSelected>>", self.on_adj_channel_change)
         
@@ -162,7 +180,7 @@ class PreProcessingTab(ttk.Frame):
         
         # Contrast Slider (C:) - Side by side!
         tk.Label(slider_frame, text="C:", font=("Arial", 9, "bold"), fg="gray").grid(row=0, column=0, sticky="e")
-        self.scale_contrast = tk.Scale(slider_frame, from_=0.1, to=5.0, resolution=0.1, orient=tk.HORIZONTAL, 
+        self.scale_contrast = tk.Scale(slider_frame, from_=0.1, to=5.0, resolution=0.05, orient=tk.HORIZONTAL, 
                                        command=self.on_shared_slider_move, 
                                        width=10, sliderlength=15) # Made thinner & less chunky
         self.scale_contrast.grid(row=0, column=1, sticky="ew", padx=(0, 5))
@@ -222,16 +240,201 @@ class PreProcessingTab(ttk.Frame):
         self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.canvas = tk.Canvas(self.canvas_frame, bg="black", cursor="crosshair")
         self.canvas.pack(fill=tk.BOTH, expand=True)
-        
-        # Mouse Bindings for Cropping
+
+        # Mouse Bindings for Cropping (Left Click)
         self.canvas.bind("<ButtonPress-1>", self.on_mouse_press)
         self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_release)
 
-        # --- NEW: Keyboard bindings for Left/Right arrows ---
+        # TRACKPAD PINCH-TO-ZOOM BINDINGS (Windows / Linux / macOS)
+        self.canvas.bind("<MouseWheel>", self.on_zoom)                     # Mouse wheels & macOS Pinch
+        self.canvas.bind("<Control-MouseWheel>", self.on_zoom)             # Windows Trackpad Pinch Gesture
+        self.canvas.bind("<Button-4>", self.on_zoom)                       # Linux Scroll Up
+        self.canvas.bind("<Button-5>", self.on_zoom)                       # Linux Scroll Down
+
+        # TRACKPAD PANNING BINDINGS (Right-Click Drag)
+        self.canvas.bind("<ButtonPress-3>", self.on_pan_start)             # Right-Click Press
+        self.canvas.bind("<B3-Motion>", self.on_pan_drag)                   # Right-Click Drag Move
+        self.canvas.bind("<ButtonRelease-3>", self.on_pan_end)             # Restore cursor on release
+
+        # NEW: TWO-FINGER TRACKPAD PANNING BINDINGS (Windows / macOS)
+        self.canvas.bind("<MouseWheel>", self.on_trackpad_pan, add="+")       # Vertical Trackpad Pan
+        self.canvas.bind("<Shift-MouseWheel>", self.on_trackpad_pan)          # Horizontal Trackpad Pan
+        
+        # Double click left mouse button (or double tap trackpad) to instantly reset view
+        self.canvas.bind("<Double-Button-1>", self.reset_view_layout)       # Center Image to the Window with Double Click
+
+
+        # --- Keyboard bindings for Left/Right arrows ---
         top = self.winfo_toplevel()
         top.bind("<Left>", lambda e: self.prev_image() if self.btn_prev_img['state'] == tk.NORMAL else None)
         top.bind("<Right>", lambda e: self.next_image() if self.btn_next_img['state'] == tk.NORMAL else None)
+
+    
+    # --- Preview zoom and pan ---
+    def on_zoom(self, event):
+        """Handles zoom gestures, preventing zooming out past full-window fit."""
+        if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
+            return
+
+        # Determine zoom direction step vector
+        if event.num == 4:
+            zoom_factor = 1.1
+        elif event.num == 5:
+            zoom_factor = 0.9
+        elif event.delta != 0:
+            zoom_factor = 1.1 if event.delta > 0 else 0.9
+        else:
+            return
+
+        # Calculate the base scale needed to fit the image perfectly on screen
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        if canvas_w < 10: 
+            canvas_w, canvas_h = 800, 600
+
+        orig_w, orig_h = self.current_pil_image.size
+        fit_scale = min(canvas_w / orig_w, canvas_h / orig_h)
+        
+        # Calculate what the new scale would be
+        new_scale = self.img_scale * zoom_factor
+
+        # RECENTER TRIGGER: If zooming out drops below or matches the window fit scale
+        if zoom_factor < 1.0 and new_scale <= (fit_scale + 0.01):
+            # Snap back to centered overview layout
+            self.img_scale = fit_scale
+            self.scale_x = fit_scale
+            self.img_offset_x = (canvas_w - int(orig_w * fit_scale)) // 2
+            self.img_offset_y = (canvas_h - int(orig_h * fit_scale)) // 2
+        else:
+            # Enforce hard constraints (No zooming out past fit_scale, max 15x zoom)
+            if new_scale < fit_scale:
+                new_scale = fit_scale
+            if new_scale > 15.0:
+                return
+
+            # Keep your standard focal point adjustment when zooming in
+            canvas_x = self.canvas.canvasx(event.x)
+            canvas_y = self.canvas.canvasy(event.y)
+
+            # Re-adjust factor to account for any boundary capping
+            actual_factor = new_scale / self.img_scale
+            self.img_offset_x = canvas_x - (canvas_x - self.img_offset_x) * actual_factor
+            self.img_offset_y = canvas_y - (canvas_y - self.img_offset_y) * actual_factor
+            self.img_scale = new_scale
+
+        self.redraw_image()
+
+    def reset_view_layout(self, event=None):
+        """Instantly resets zoom factor and centers the image on the canvas."""
+        if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
+            return
+            
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        if canvas_w < 10: 
+            canvas_w, canvas_h = 800, 600
+            
+        orig_w, orig_h = self.current_pil_image.size
+        fit_scale = min(canvas_w / orig_w, canvas_h / orig_h)
+        
+        self.img_scale = fit_scale
+        self.scale_x = fit_scale
+        self.img_offset_x = (canvas_w - int(orig_w * fit_scale)) // 2
+        self.img_offset_y = (canvas_h - int(orig_h * fit_scale)) // 2
+        
+        self.redraw_image()
+
+    def on_pan_start(self, event):
+        """Initializes coordinates for drag-panning and changes cursor shape."""
+        self.pan_start_x = event.x
+        self.pan_start_y = event.y
+        self.canvas.config(cursor="fleur")  # Visual anchor update for panning
+
+    def on_pan_drag(self, event):
+        """Updates image offsets dynamically during a drag movement."""
+        dx = event.x - self.pan_start_x
+        dy = event.y - self.pan_start_y
+
+        self.img_offset_x += dx
+        self.img_offset_y += dy
+
+        self.pan_start_x = event.x
+        self.pan_start_y = event.y
+
+        self.redraw_image()
+
+    def on_pan_end(self, event):
+        """Restores the standard crop crosshair cursor when right-click pan drag ends."""
+        self.canvas.config(cursor="crosshair")
+
+
+    def on_trackpad_pan(self, event):
+        """Enables native two-finger trackpad swipe-to-pan for Windows and macOS."""
+        if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
+            return
+
+        # If the Control key modifier is active, this is a zoom event. 
+        # Skip panning to prevent conflicting jitter.
+        if event.state & 0x0004:  # 0x0004 is Control Key mask in Tkinter
+            return
+            
+        if hasattr(event, 'delta') and event.delta != 0:
+            # Determine scroll direction step size
+            # Trackpad events are rapid, so use a normalized step (e.g., 15-20 pixels per tick)
+            pan_step = 20 if event.delta > 0 else -20
+            
+            # Check if Shift key is pressed (Horizontal Scroll)
+            if event.state & 0x0001:  # 0x0001 is Shift Key mask
+                self.img_offset_x += pan_step
+            else:
+                # Vertical Scroll
+                # On Windows, trackpad scrolling defaults down; on macOS it might be inverted
+                if self.os_type == "Darwin":
+                    self.img_offset_y += event.delta
+                else:
+                    self.img_offset_y += pan_step
+
+            self.redraw_image()
+
+    def redraw_image(self):
+        """Resamples the base image and draws it at the active scale and offsets."""
+        if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
+            return
+
+        self.canvas.delete("all")
+
+        # Keep your scale bar module synchronized with zoom modifications
+        self.scale_x = self.img_scale
+
+        # Calculate new dynamic size vectors
+        orig_w, orig_h = self.current_pil_image.size
+        new_w = max(1, int(orig_w * self.img_scale))
+        new_h = max(1, int(orig_h * self.img_scale))
+
+        # Use NEAREST resampling for smooth, lag-free rendering during trackpad movements
+        resized_img = self.current_pil_image.resize((new_w, new_h), Image.Resampling.NEAREST)
+        
+        # FIX: Matches self.tk_img from update_preview to prevent memory cleanup bugs
+        self.tk_img = ImageTk.PhotoImage(resized_img)
+
+        # Place image on canvas using our dynamic offset registers
+        self.canvas.create_image(self.img_offset_x, self.img_offset_y, anchor=tk.NW, image=self.tk_img)
+        
+        # Redraw crop rectangle if it exists, converting image space to zoomed canvas space
+        if hasattr(self, 'current_rect') and self.current_rect:
+            x1, y1, x2, y2 = self.current_rect
+            cx1 = x1 * self.img_scale + self.img_offset_x
+            cy1 = y1 * self.img_scale + self.img_offset_y
+            cx2 = x2 * self.img_scale + self.img_offset_x
+            cy2 = y2 * self.img_scale + self.img_offset_y
+            self.rect_id = self.canvas.create_rectangle(cx1, cy1, cx2, cy2, outline="red", width=2)
+
+        # Render scale bar overlay layer dynamically
+        if hasattr(self, 'draw_scale_bar'):
+            self.draw_scale_bar()
+
+
 
     # --- Channel Adjustments ---
     def on_adj_channel_change(self, event=None):
@@ -989,13 +1192,16 @@ class PreProcessingTab(ttk.Frame):
         self.update_preview()
 
     def update_preview(self, event=None):
-        if self.raw_volume is None: return
+        """Processes the active CZI stack frame at full resolution and caches it."""
+        if self.raw_volume is None: 
+            return
         
         if self.is_merged_preview:
             try:
                 z_start = max(0, min(int(self.spin_z_start.get()), self.max_z))
                 z_end = max(0, min(int(self.spin_z_end.get()), self.max_z))
-                if z_start > z_end: z_start, z_end = z_end, z_start
+                if z_start > z_end: 
+                    z_start, z_end = z_end, z_start
             except ValueError:
                 z_start, z_end = 0, self.max_z
                 
@@ -1007,34 +1213,70 @@ class PreProcessingTab(ttk.Frame):
             self.lbl_z_current.config(text=f"Current Stack: {z_idx}")
             raw_data = self.raw_volume[z_idx]
 
-        canvas_w = self.canvas.winfo_width()
-        canvas_h = self.canvas.winfo_height()
-        if canvas_w < 10: canvas_w, canvas_h = 800, 600
-        
         img_h, img_w = raw_data.shape[:2]
-        if img_w == 0 or img_h == 0: return 
-        
-        scale = min(canvas_w / img_w, canvas_h / img_h)
-        new_w = max(1, int(img_w * scale))
-        new_h = max(1, int(img_h * scale))
-        
-        # Save display parameters for cropping math
-        self.img_scale = scale
-        self.scale_x = scale  # <-- NEW: Feeds the exact preview zoom into draw_scale_bar!
-        
-        self.img_offset_x = (canvas_w - new_w) // 2
-        self.img_offset_y = (canvas_h - new_h) // 2
-        
-        preview_small = cv2.resize(raw_data, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-        preview_edited = self.apply_image_math(preview_small)
-        
-        self.tk_img = ImageTk.PhotoImage(Image.fromarray(preview_edited))
-        self.canvas.delete("all")
-        self.canvas.create_image(canvas_w//2, canvas_h//2, anchor=tk.CENTER, image=self.tk_img)
-        self.rect_id = None # Clear old bounding box state on redraw
+        if img_w == 0 or img_h == 0: 
+            return 
 
-        # Draw scale bar on top
-        self.draw_scale_bar()
+        # --- NEW: Process full-resolution image data first ---
+        # Apply contrast/brightness/LUT math to full raw array to preserve fidelity when zooming
+        full_res_processed = self.apply_image_math(raw_data)
+        self.current_pil_image = Image.fromarray(full_res_processed)
+
+        # --- NEW: Setup initial scale/offset only on first load ---
+        # If scale is uninitialized (1.0) or reset, fit it nicely inside the window bounds
+        if not hasattr(self, '_initialized_view') or not self._initialized_view:
+            canvas_w = self.canvas.winfo_width()
+            canvas_h = self.canvas.winfo_height()
+            if canvas_w < 10: 
+                canvas_w, canvas_h = 800, 600
+            
+            fit_scale = min(canvas_w / img_w, canvas_h / img_h)
+            self.img_scale = fit_scale
+            self.scale_x = fit_scale  # For your scale bar logic
+            
+            # Center the view frame
+            self.img_offset_x = (canvas_w - int(img_w * fit_scale)) // 2
+            self.img_offset_y = (canvas_h - int(img_h * fit_scale)) // 2
+            self._initialized_view = True
+
+        # Render the viewport layout
+        self.redraw_image()
+
+    def redraw_image(self):
+        """Resamples the full-resolution frame dynamically using active scale and offsets."""
+        if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
+            return
+
+        self.canvas.delete("all")
+
+        # Sync scale parameters for dependencies like scale bar calculation
+        self.scale_x = self.img_scale
+
+        # Calculate dynamic dimension vectors
+        orig_w, orig_h = self.current_pil_image.size
+        new_w = max(1, int(orig_w * self.img_scale))
+        new_h = max(1, int(orig_h * self.img_scale))
+
+        # Resize cached high-res slice using nearest neighbor for performance speed
+        resized_img = self.current_pil_image.resize((new_w, new_h), Image.Resampling.NEAREST)
+        self.tk_img = ImageTk.PhotoImage(resized_img)
+
+        # Draw image on canvas using absolute offset registers
+        self.canvas.create_image(self.img_offset_x, self.img_offset_y, anchor=tk.NW, image=self.tk_img)
+        self.rect_id = None 
+
+        # Re-render cropping selection bounding boxes if actively drawn
+        if self.current_rect:
+            x1, y1, x2, y2 = self.current_rect
+            cx1 = x1 * self.img_scale + self.img_offset_x
+            cy1 = y1 * self.img_scale + self.img_offset_y
+            cx2 = x2 * self.img_scale + self.img_offset_x
+            cy2 = y2 * self.img_scale + self.img_offset_y
+            self.rect_id = self.canvas.create_rectangle(cx1, cy1, cx2, cy2, outline="red", width=2)
+
+        # Draw scale bar dynamically on top layer
+        if hasattr(self, 'draw_scale_bar'):
+            self.draw_scale_bar()
 
     # --- Saving ---
     def save_image_to_disk(self):

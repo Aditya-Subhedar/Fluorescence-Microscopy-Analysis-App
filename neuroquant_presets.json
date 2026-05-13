@@ -134,9 +134,37 @@
                 1000
             ],
             "circularity": 21
+        },
+        "green": {
+            "hue": [
+                24,
+                92
+            ],
+            "intensity": [
+                125,
+                255
+            ],
+            "area": [
+                107,
+                1000
+            ],
+            "circularity": 0
+        },
+        "red": {
+            "hue": [
+                0,
+                26
+            ],
+            "intensity": [
+                153,
+                255
+            ],
+            "area": [
+                107,
+                1000
+            ],
+            "circularity": 0
         }
     },
-    "pinned": [
-        "a1"
-    ]
+    "pinned": []
 }
