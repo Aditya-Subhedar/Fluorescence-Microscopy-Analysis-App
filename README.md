@@ -25,6 +25,29 @@ This application provides a robust, efficient, and accurate alternative to manua
     * **Clear Drawings:** Instantly reset manual corrections.
 * **Automatic Reporting:** Real-time display of **Fluorescent Area %** and **Cluster Counts**, with automated, structured export directly to Microsoft Excel.
 
+### 📍 Tab 3: Golgi Morphological Profiling (Sholl Analysis)
+* **Neuronal Architecture Mapping:** Specialized 2D analytical suite optimized for tracking complex cellular extensions, dendrite branching networks, and dendritic spine concentrations.
+* **Semi-Automated Sholl Calibration:** Interactive circle distance selection ($\mu m$) that automatically projects concentric bounding rings centered on the neuron's soma to calculate dendritic intersection densities at set radial distances.
+* **Synced Duplex Viewing Engine:** Features a side-by-side presentation board splitting the raw, contrast-adjusted microscope frame from the high-contrast binary overlay stencil to trace morphology in real time.
+* **Live Quantification Metrics:** Instant quantitative calculation tracking total detected spines, active spine frequencies within target ranges (e.g., $20\text{--}30\,\mu m$), and structural branch densities.
+* **Session Logging:** Single-click tabular compilation exporting complete morphological tracking history arrays straight into structured Excel/CSV sheets for downstream figure generation.
+
+### 📍 Tab 4: Figure Layer Merger & Annotation
+* **Publication Figure Compositing:** Multi-layer alpha-channel blender that combines distinct custom-colored outline masks (e.g., separate channels for Red, Green, or Blue regions) into a single composite asset.
+* **Microscopy Backdrop Superimposition:** Allows loading raw grayscale or multi-channel microscope files (`.tif`, `.jpeg`, `.png`) as the base layer, allowing users to overlay boundary vectors exactly on top of original cellular stain structures.
+* **Flexible Backdrop Management:** Full support for transparent exports (for custom downstream manuscript assemblies) or solid background colors (e.g., crisp print-ready solid white or black backdrops).
+* **Interactive Typography Overlays:** Built-in annotation suite supporting custom text, responsive font size scaling, and color configurations. 
+* **Draggable Canvas Layout Elements:** Features a cursor drag-and-drop system to position text annotations anywhere on the canvas workspace. Text coordinates stay locked to high-resolution pixels to prevent pixelation upon export.
+
+---
+
+## 🛠️ Technical Architecture & Stack
+
+* **GUI Engine:** Python `tkinter` + `ttk` widgets
+* **Image Processing Engine:** OpenCV (`cv2`), `scikit-image` (`measure`), NumPy
+* **I/O File Handlers:** Pillow (`PIL`), `czifile` image arrays
+* **Data Pipelines:** `pandas`, `openpyxl`
+
 ## Setup & Installation
 
 Ensure you have Python 3.8+ installed.
