@@ -9,8 +9,9 @@ from PIL import Image, ImageTk
 import tifffile
 import czifile
 from skimage import filters, measure
-# --> Import your custom widget from widgets.pyk
+# --> Import custom widget from widgets.pyk
 from widgets import ColorRangeSlider, SingleSlider
+from tkinter import colorchooser
 
 class QuantificationTab(ttk.Frame):
     def __init__(self, parent):
@@ -22,7 +23,8 @@ class QuantificationTab(ttk.Frame):
         self.original_image_rgb = None
         self.current_manual_add = None
         self.current_manual_remove = None
-        
+        self.current_mask = None # <-- NEW: Master binary mask containing sliders + pencil
+
         self.cached_hsv = None
         self.cached_gray = None
         self._update_job = None 
@@ -41,7 +43,7 @@ class QuantificationTab(ttk.Frame):
         self.offset_y = 0
 
         # --- PRESET STATE VARIABLES ---
-        self.presets_file = "neuroquant_presets.json"
+        self.presets_file = "cytoquant_presets.json"
         self.presets_collection = {} 
         self.pinned_presets = []
         self.current_preset = None 
@@ -64,7 +66,7 @@ class QuantificationTab(ttk.Frame):
         self.btn_select_images.pack(side=tk.LEFT, padx=10)
         
         self.btn_auto = tk.Button(control_frame, text="Auto Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 10, "bold"))
-        self.btn_auto.pack(side=tk.LEFT, padx=(20, 10))
+        self.btn_auto.pack(side=tk.LEFT, padx=(10, 10))
         
         tool_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=5, pady=2)
         tool_frame.pack(side=tk.LEFT, padx=10)
@@ -91,7 +93,13 @@ class QuantificationTab(ttk.Frame):
         tk.Button(control_frame, text="Save As Preset", command=self.save_as_preset).pack(side=tk.LEFT, padx=2)
         # ----------------------
 
+        # --- NEW: MASK IMPORT / EXPORT BUTTONS ---
+        tk.Button(control_frame, text="💾 Save Mask", command=self.save_mask_as_png, bg="#1976d2", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=5)
+        # ------------------------------------------
+
+        # --- Saveing data button ---
         tk.Button(control_frame, text="Save Data to Excel/CSV", command=self.export_excel, font=("Arial", 10, "bold"), fg="white", bg="#2e7d32").pack(side=tk.RIGHT, padx=10)
+
 
         # --- SLIDER FRAME ---
         slider_frame = tk.Frame(root_frame, pady=10)
@@ -178,7 +186,6 @@ class QuantificationTab(ttk.Frame):
         # Ctrl+O for Open/Select Images
         top.bind("<Control-o>", lambda e: self.load_files() if self.winfo_ismapped() else None, add="+")
         # -------------------------------------------------------
-
 
     # --- Loadng ---
     def load_files(self):
@@ -369,7 +376,6 @@ class QuantificationTab(ttk.Frame):
             import tkinter.messagebox as messagebox
             messagebox.showerror("Error", f"Failed loading {os.path.basename(file_path)}:\n{e}")
 
-
     # --- Mouse Events for Zooming and Scrooling ---
     def on_mousewheel_zoom(self, event):
         # 1. Determine direction
@@ -422,7 +428,6 @@ class QuantificationTab(ttk.Frame):
         self.pan_x += delta
         self.fast_redraw()
 
-
     # --- Drawing Mode (Draw / Erase) ---
     def set_draw_mode(self, mode):
         self.draw_mode = mode
@@ -435,7 +440,6 @@ class QuantificationTab(ttk.Frame):
             self.btn_pencil.config(relief=tk.RAISED, bg="SystemButtonFace")
             self.canvas.config(cursor="circle") 
 
-
     # --- Auto Detect for Segmentation of Fluorosent Regions ---
     def toggle_auto_detect(self):
         if not self.image_states or self.original_image_rgb is None: return
@@ -445,7 +449,6 @@ class QuantificationTab(ttk.Frame):
         else:
             self.btn_auto.config(text="Auto Detect: OFF", fg="red")
         self.process_image()
-
 
     # --- Slider Adjustments and Preview Updates ---
     def on_slider_move_continuous(self, val):
@@ -549,7 +552,12 @@ class QuantificationTab(ttk.Frame):
                     valid_regions.append(r)
             
             mask_filtered_area = np.isin(labeled_mask, valid_labels).astype(np.uint8) * 255
-            
+
+            # ---> NEW: Save the active binary matrix to the instance variable <---
+            self.current_mask = mask_filtered_area.copy()
+            num_clusters = len(valid_regions)
+            # -------------------------------------------
+
             num_clusters = len(valid_regions)
             mean_intensity = np.mean([r.intensity_mean for r in valid_regions]) if num_clusters > 0 else 0
             areas_total = sum([r.area for r in valid_regions])
@@ -585,6 +593,8 @@ class QuantificationTab(ttk.Frame):
             stats_meta = f"Fluorescent Area: {round(area_percentage, 2)}%{area_um2_str} | Clusters: {num_clusters}"
             self.lbl_stats_integrated.config(text=f"{file_meta}\n{stats_meta}")
         else:
+            # ---> NEW: Reset mask tracker if Auto Detect is turned off <---
+            self.current_mask = None
             self.lbl_stats_integrated.config(text=f"{file_meta}\nView: Original Image (Auto Detect OFF)")
 
         if self.current_manual_remove is not None and np.any(self.current_manual_remove > 0):
@@ -619,7 +629,6 @@ class QuantificationTab(ttk.Frame):
         
         # Trigger the lightweight drawing function
         self.fast_redraw()
-
 
     # --- Scale Bar (Remove) ---
     def fast_redraw(self):
@@ -700,7 +709,6 @@ class QuantificationTab(ttk.Frame):
             self.canvas.create_rectangle(x1, y1, x2, y2, fill="white", outline="white")
             self.canvas.create_text(text_x, text_y, text=text, fill="white", font=("Arial", 12, "bold"))
     
-
     # --- Panning ---
     def start_pan(self, event):
         self.pan_start_x = event.x
@@ -721,7 +729,6 @@ class QuantificationTab(ttk.Frame):
         
         self.fast_redraw()
     
-
     # --- Drawing and Correction ---    
     def save_state_for_undo(self):
         if not self.image_states: return
@@ -825,7 +832,6 @@ class QuantificationTab(ttk.Frame):
         if state['manual_mask_add'] is not None: state['manual_mask_add'].fill(0)
         if state['manual_mask_remove'] is not None: state['manual_mask_remove'].fill(0)
         self.process_image()
-
 
     # --- PRESET SAVING & LOADING ---
     def load_presets_from_file(self):
@@ -1007,18 +1013,18 @@ class QuantificationTab(ttk.Frame):
         self.dropdown_window.destroy()
         self.save_presets_to_file() # <--- SAVES TO FILE
     
-
     # --- Image Switching ---
     def next_image(self):
+        self.current_mask = None
         if self.current_index < len(self.image_states) - 1:
             self.current_index += 1
             self.load_current_image_data()
 
     def prev_image(self):
+        self.current_mask = None
         if self.current_index > 0:
             self.current_index -= 1
             self.load_current_image_data()
-
 
     # --- Export Data ---
     def export_excel(self):
@@ -1114,3 +1120,101 @@ class QuantificationTab(ttk.Frame):
                 
             except Exception as e:
                 messagebox.showerror("Export Error", f"Failed to export data:\n{e}")
+
+    # --- Binary Mask ---
+    def get_active_binary_mask(self):
+        """Returns the master binary mask cached during image processing."""
+        if getattr(self, 'original_image_rgb', None) is None:
+            return None
+        return getattr(self, 'current_mask', None)
+
+    def save_mask_as_png(self):
+        """Asks for a custom color and saves contours as a transparent PNG with correct colors."""
+        mask = self.get_active_binary_mask()
+        
+        if mask is None or np.sum(mask) == 0:
+            messagebox.showwarning("No Mask Found", "There are no outlined features or pencil tracks to export.")
+            return
+
+        # 1. Open the native color selection window
+        color_choice = colorchooser.askcolor(
+            initialcolor="#ffffff", 
+            title="Select Outline Color for Research Figure"
+        )
+        
+        # Abort gracefully if the user cancels or exits the picker window
+        if not color_choice or color_choice[0] is None:
+            return
+
+        # Extract RGB values directly from the Tkinter result tuple
+        r_val = int(color_choice[0][0])
+        g_val = int(color_choice[0][1])
+        b_val = int(color_choice[0][2])
+
+        # 2. Open the file save dialogue prompt
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG Image", "*.png")],
+            title="Export Colored Borders as Transparent PNG"
+        )
+        if not file_path:
+            return
+
+        try:
+            h, w = mask.shape[:2]
+            # Create a 4-channel image (RGBA), initialized to fully transparent black (0,0,0,0)
+            rgba_outlines = np.zeros((h, w, 4), dtype=np.uint8)
+            
+            # Extract the geometric edges of your active zones
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            
+            # FIXED: Because Image.fromarray converts the raw matrix to RGBA,
+            # OpenCV must write colors directly in (R, G, B, A) order.
+            line_color = (r_val, g_val, b_val, 255) 
+            thickness = 2 
+            
+            # Render the lines onto our transparent matrix layer
+            cv2.drawContours(rgba_outlines, contours, -1, line_color, thickness)
+            
+            # Save using PIL to properly encode the structural alpha-channel format
+            Image.fromarray(rgba_outlines).save(file_path, "PNG")
+            messagebox.showinfo("Success", f"Mask borders written in your chosen color to:\n{file_path}")
+            
+        except Exception as e:
+            messagebox.showerror("Error Saving", f"Failed to compress PNG output:\n{str(e)}")
+
+    def apply_saved_mask(self):
+        """Loads a transparent custom-colored PNG mask back into the pipeline."""
+        if self.original_image_rgb is None:
+            messagebox.showwarning("No Image", "Load an active image target before applying masks.")
+            return
+
+        file_path = filedialog.askopenfilename(
+            filetypes=[("PNG Image", "*.png"), ("All Files", "*.*")],
+            title="Select Outline Mask File"
+        )
+        if not file_path:
+            return
+
+        try:
+            loaded_img = Image.open(file_path)
+            h, w = self.original_image_rgb.shape[:2]
+            loaded_img = loaded_img.resize((w, h), Image.Resampling.NEAREST)
+            img_np = np.array(loaded_img)
+            
+            if img_np.shape[-1] == 4:
+                # ROBUST CHECK: Any pixel that has opacity (Alpha > 0) is parsed as a border mask, 
+                # regardless of whether the outline was saved as Red, Green, Blue, or White.
+                binary_mask = (img_np[:, :, 3] > 0).astype(np.uint8) * 255
+            else:
+                gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+                _, binary_mask = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
+                
+            self.current_mask = binary_mask
+            
+            # Trigger your display pipeline to update the view and calculate stats
+            self.process_image()
+                
+            messagebox.showinfo("Applied", "Mask outlines overlayed onto current frame matrix.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to map external data frame:\n{str(e)}")
