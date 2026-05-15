@@ -52,7 +52,6 @@ class PreProcessingTab(ttk.Frame):
         if hasattr(self, 'maximize_window'):
             self.maximize_window()
 
-
     def maximize_window(self):
         top = self.winfo_toplevel()
         try:
@@ -270,7 +269,6 @@ class PreProcessingTab(ttk.Frame):
         top.bind("<Left>", lambda e: self.prev_image() if self.btn_prev_img['state'] == tk.NORMAL else None)
         top.bind("<Right>", lambda e: self.next_image() if self.btn_next_img['state'] == tk.NORMAL else None)
 
-    
     # --- Preview zoom and pan ---
     def on_zoom(self, event):
         """Handles zoom gestures, preventing zooming out past full-window fit."""
@@ -368,7 +366,6 @@ class PreProcessingTab(ttk.Frame):
         """Restores the standard crop crosshair cursor when right-click pan drag ends."""
         self.canvas.config(cursor="crosshair")
 
-
     def on_trackpad_pan(self, event):
         """Enables native two-finger trackpad swipe-to-pan for Windows and macOS."""
         if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
@@ -433,8 +430,6 @@ class PreProcessingTab(ttk.Frame):
         # Render scale bar overlay layer dynamically
         if hasattr(self, 'draw_scale_bar'):
             self.draw_scale_bar()
-
-
 
     # --- Channel Adjustments ---
     def on_adj_channel_change(self, event=None):
