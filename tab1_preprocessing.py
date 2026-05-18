@@ -269,7 +269,7 @@ class PreProcessingTab(ttk.Frame):
         top.bind("<Left>", lambda e: self.prev_image() if self.btn_prev_img['state'] == tk.NORMAL else None)
         top.bind("<Right>", lambda e: self.next_image() if self.btn_next_img['state'] == tk.NORMAL else None)
 
-    # --- Preview zoom and pan ---
+# --- Preview zoom and pan ---
     def on_zoom(self, event):
         """Handles zoom gestures, preventing zooming out past full-window fit."""
         if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
@@ -301,9 +301,12 @@ class PreProcessingTab(ttk.Frame):
         if zoom_factor < 1.0 and new_scale <= (fit_scale + 0.01):
             # Snap back to centered overview layout
             self.img_scale = fit_scale
+            self.zoom_scale = fit_scale  # Keep synced with master state register
             self.scale_x = fit_scale
             self.img_offset_x = (canvas_w - int(orig_w * fit_scale)) // 2
             self.img_offset_y = (canvas_h - int(orig_h * fit_scale)) // 2
+            self.img_x = self.img_offset_x
+            self.img_y = self.img_offset_y
         else:
             # Enforce hard constraints (No zooming out past fit_scale, max 15x zoom)
             if new_scale < fit_scale:
@@ -319,7 +322,12 @@ class PreProcessingTab(ttk.Frame):
             actual_factor = new_scale / self.img_scale
             self.img_offset_x = canvas_x - (canvas_x - self.img_offset_x) * actual_factor
             self.img_offset_y = canvas_y - (canvas_y - self.img_offset_y) * actual_factor
+            
             self.img_scale = new_scale
+            # Keep master state variables explicitly synced
+            self.zoom_scale = new_scale
+            self.img_x = self.img_offset_x
+            self.img_y = self.img_offset_y
 
         self.redraw_image()
 
@@ -337,9 +345,12 @@ class PreProcessingTab(ttk.Frame):
         fit_scale = min(canvas_w / orig_w, canvas_h / orig_h)
         
         self.img_scale = fit_scale
+        self.zoom_scale = fit_scale
         self.scale_x = fit_scale
         self.img_offset_x = (canvas_w - int(orig_w * fit_scale)) // 2
         self.img_offset_y = (canvas_h - int(orig_h * fit_scale)) // 2
+        self.img_x = self.img_offset_x
+        self.img_y = self.img_offset_y
         
         self.redraw_image()
 
@@ -356,6 +367,10 @@ class PreProcessingTab(ttk.Frame):
 
         self.img_offset_x += dx
         self.img_offset_y += dy
+        
+        # Keep master tracking state synchronized
+        self.img_x = self.img_offset_x
+        self.img_y = self.img_offset_y
 
         self.pan_start_x = event.x
         self.pan_start_y = event.y
@@ -371,27 +386,26 @@ class PreProcessingTab(ttk.Frame):
         if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
             return
 
-        # If the Control key modifier is active, this is a zoom event. 
-        # Skip panning to prevent conflicting jitter.
-        if event.state & 0x0004:  # 0x0004 is Control Key mask in Tkinter
+        # Skip panning if Control modifier is active to prevent conflicting jitter
+        if event.state & 0x0004:  
             return
             
         if hasattr(event, 'delta') and event.delta != 0:
-            # Determine scroll direction step size
-            # Trackpad events are rapid, so use a normalized step (e.g., 15-20 pixels per tick)
             pan_step = 20 if event.delta > 0 else -20
             
             # Check if Shift key is pressed (Horizontal Scroll)
-            if event.state & 0x0001:  # 0x0001 is Shift Key mask
+            if event.state & 0x0001:  
                 self.img_offset_x += pan_step
             else:
                 # Vertical Scroll
-                # On Windows, trackpad scrolling defaults down; on macOS it might be inverted
-                if self.os_type == "Darwin":
+                if hasattr(self, 'os_type') and self.os_type == "Darwin":
                     self.img_offset_y += event.delta
                 else:
                     self.img_offset_y += pan_step
 
+            # Synchronize modified structural properties
+            self.img_x = self.img_offset_x
+            self.img_y = self.img_offset_y
             self.redraw_image()
 
     def redraw_image(self):
@@ -401,8 +415,11 @@ class PreProcessingTab(ttk.Frame):
 
         self.canvas.delete("all")
 
-        # Keep your scale bar module synchronized with zoom modifications
+        # Keep everything explicitly tied together to support tracking dependencies
+        self.zoom_scale = self.img_scale
         self.scale_x = self.img_scale
+        self.img_x = self.img_offset_x
+        self.img_y = self.img_offset_y
 
         # Calculate new dynamic size vectors
         orig_w, orig_h = self.current_pil_image.size
@@ -412,12 +429,13 @@ class PreProcessingTab(ttk.Frame):
         # Use NEAREST resampling for smooth, lag-free rendering during trackpad movements
         resized_img = self.current_pil_image.resize((new_w, new_h), Image.Resampling.NEAREST)
         
-        # FIX: Matches self.tk_img from update_preview to prevent memory cleanup bugs
+        # Saves the reference to self.tk_img to prevent canvas garbage collection bugs
         self.tk_img = ImageTk.PhotoImage(resized_img)
 
         # Place image on canvas using our dynamic offset registers
         self.canvas.create_image(self.img_offset_x, self.img_offset_y, anchor=tk.NW, image=self.tk_img)
-        
+        self.rect_id = None
+
         # Redraw crop rectangle if it exists, converting image space to zoomed canvas space
         if hasattr(self, 'current_rect') and self.current_rect:
             x1, y1, x2, y2 = self.current_rect
@@ -731,19 +749,36 @@ class PreProcessingTab(ttk.Frame):
 
     # --- Mouse Events for Cropping ---
     def on_mouse_press(self, event):
-        self.start_x = event.x
-        self.start_y = event.y
-        if self.rect_id:
+        # Record starting point in absolute canvas space
+        self.start_canvas_x = event.x
+        self.start_canvas_y = event.y
+        
+        if hasattr(self, 'rect_id') and self.rect_id:
             self.canvas.delete(self.rect_id)
-        self.rect_id = self.canvas.create_rectangle(self.start_x, self.start_y, self.start_x, self.start_y, outline="yellow", dash=(4, 4), width=2)
+            
+        self.rect_id = self.canvas.create_rectangle(
+            self.start_canvas_x, self.start_canvas_y, 
+            self.start_canvas_x, self.start_canvas_y, 
+            outline="yellow", dash=(4, 4), width=2
+        )
 
     def on_mouse_drag(self, event):
-        if self.rect_id:
-            self.canvas.coords(self.rect_id, self.start_x, self.start_y, event.x, event.y)
+        if hasattr(self, 'rect_id') and self.rect_id:
+            self.canvas.coords(self.rect_id, self.start_canvas_x, self.start_canvas_y, event.x, event.y)
 
     def on_mouse_release(self, event):
-        if self.rect_id:
-            self.current_rect = (self.start_x, self.start_y, event.x, event.y)
+        if hasattr(self, 'rect_id') and self.rect_id:
+            # Convert canvas display coordinates back to the underlying RAW file pixel indices
+            raw_x1 = (self.start_canvas_x - self.img_x) / self.zoom_scale
+            raw_y1 = (self.start_canvas_y - self.img_y) / self.zoom_scale
+            raw_x2 = (event.x - self.img_x) / self.zoom_scale
+            raw_y2 = (event.y - self.img_y) / self.zoom_scale
+            
+            # Keep values within true ordered bounds
+            x1, x2 = min(raw_x1, raw_x2), max(raw_x1, raw_x2)
+            y1, y2 = min(raw_y1, raw_y2), max(raw_y1, raw_y2)
+            
+            self.current_rect = (x1, y1, x2, y2)
 
     def apply_crop(self):
         if not self.current_rect or self.raw_volume is None: return
@@ -1086,6 +1121,23 @@ class PreProcessingTab(ttk.Frame):
                 if p_max <= p_min: p_max = p_min + 1
                 self.channel_baselines.append({'min': float(p_min), 'max': float(p_max)})
 
+            # --- NEW: Pre-calculate Percentiles for All Individual Z-Slices ---
+            # This completely removes the np.percentile calculation overhead from the slider loop
+            self.z_percentiles = {}
+            for z in range(self.max_z + 1):
+                self.z_percentiles[z] = []
+                for c in range(min(3, img.shape[3])):  # Loop through available R, G, B channels
+                    ch_data = self.raw_volume[z, :, :, c]
+                    p_min, p_max = np.percentile(ch_data, (1.0, 99.9))
+                    val_range = (p_max - p_min) if (p_max - p_min) > 0 else 1.0
+                    self.z_percentiles[z].append((p_min, val_range))
+
+            # Initialize Zoom/Pan tracking variables if not already set
+            if not hasattr(self, 'zoom_scale'):
+                self.zoom_scale = 1.0
+                self.img_x = 0
+                self.img_y = 0
+
             # Update UI Sliders
             self.scale_z.config(to=self.max_z)
             self.scale_z.set(mid_z)
@@ -1108,12 +1160,11 @@ class PreProcessingTab(ttk.Frame):
             self.canvas.delete("all")
 
     # --- Processing ---
-    def apply_image_math(self, image_multi):
-        """Processes contrast and brightness for each channel using ImageJ-style auto-scaling."""
+    def apply_image_math(self, image_multi, current_z):
+        """Processes contrast and brightness using cached percentile values."""
         import numpy as np
         h, w, c_total = image_multi.shape
         
-        # --- READ FROM COMPACT UI DICTIONARY ---
         channel_params = [
             (self.adj_data["Red (Alexa 568)"]["c"], self.adj_data["Red (Alexa 568)"]["b"], self.var_ch_r.get()),
             (self.adj_data["Green (Alexa 488)"]["c"], self.adj_data["Green (Alexa 488)"]["b"], self.var_ch_g.get()),
@@ -1123,58 +1174,52 @@ class PreProcessingTab(ttk.Frame):
         processed_channels = []
 
         for i, (contrast, brightness, is_visible) in enumerate(channel_params):
-            # If channel is hidden or doesn't exist, pass a blank black array
             if not is_visible or i >= c_total: 
                 processed_channels.append(np.zeros((h, w), dtype=np.float32))
                 continue
             
             ch_data = image_multi[:, :, i].astype(np.float32)
             
-            # --- THE FIX: ImageJ-Style Histogram Stretching ---
-            # Instead of using absolute min/max, we find the 1st and 99.9th percentiles.
-            # 1.0% cuts out the dark background noise floor.
-            # 99.9% cuts out extreme outlier "hot pixels" so they don't skew the scale.
-            p_min, p_max = np.percentile(ch_data, (1.0, 99.9))
-            
-            # Prevent division by zero if a channel is completely blank
-            val_range = (p_max - p_min) if (p_max - p_min) > 0 else 1.0
+            # Use pre-cached values instead of recalculating via np.percentile
+            if hasattr(self, 'z_percentiles') and current_z in self.z_percentiles and i < len(self.z_percentiles[current_z]):
+                p_min, val_range = self.z_percentiles[current_z][i]
+            else:
+                p_min = 0.0
+                val_range = 1.0
             
             # 1. Normalize specifically within this dense data range
             norm_ch = (ch_data - p_min) / val_range
             norm_ch = np.clip(norm_ch, 0.0, 1.0)
             
-            # 2. Apply manual UI Contrast and Brightness on top of the optimized base
+            # 2. Apply manual UI Contrast and Brightness
             norm_ch = (norm_ch * contrast) + brightness
             norm_ch = np.clip(norm_ch, 0.0, 1.0)
             
             processed_channels.append(norm_ch)
 
-        # 3. Send the fully processed grayscale arrays to the pseudo-color blender
+        # --- THE FIX: Unpack the channels individually using explicit indices ---
         return self.apply_pseudo_colors(processed_channels[0], processed_channels[1], processed_channels[2])
 
     def apply_pseudo_colors(self, norm_r, norm_g, norm_b):
-        """Blends 3 normalized grayscale arrays (0.0 to 1.0) using the chosen UI colors."""
+        """Blends 3 normalized grayscale arrays (0.0 to 1.0) using the chosen UI colors via ultra-fast vector math."""
         import numpy as np
         
-        h, w = norm_r.shape
-        blended = np.zeros((h, w, 3), dtype=np.float32)
+        # 1. Stack the 3 separate 2D grayscale channels into a single (H, W, 3) matrix
+        stacked_channels = np.stack([norm_r, norm_g, norm_b], axis=-1)
         
-        # Link the grayscale arrays to their dynamically chosen UI colors
-        layers = [
-            (norm_r, self.color_r),
-            (norm_g, self.color_g),
-            (norm_b, self.color_b)
-        ]
+        # 2. Build a transformation matrix from your UI colors
+        color_matrix = np.array([self.color_r, self.color_g, self.color_b], dtype=np.float32)
         
-        # Additive Blending (Matches ImageJ "Composite" rendering)
-        for norm_ch, color in layers:
-            # color[0]=Red, color[1]=Green, color[2]=Blue
-            blended[:, :, 0] += norm_ch * color[0] 
-            blended[:, :, 1] += norm_ch * color[1] 
-            blended[:, :, 2] += norm_ch * color[2] 
+        # If UI colors are 0-1 normalized float weights, scale them up to RGB 255 values
+        if color_matrix.max() <= 1.0 and color_matrix.max() > 0:
+            color_matrix = color_matrix * 255.0
+
+        # 3. Fast matrix dot product
+        blended = np.dot(stacked_channels, color_matrix)
             
+        # 4. Safe clip and cast to 8-bit image array
         return np.clip(blended, 0, 255).astype(np.uint8)
-    
+
     def on_z_slider_move(self, val=None):
         """Interrupts the Z-slider to break out of merge mode if it's active."""
         if getattr(self, 'is_merged_preview', False):
@@ -1191,6 +1236,10 @@ class PreProcessingTab(ttk.Frame):
         if self.raw_volume is None: 
             return
         
+        import numpy as np
+        from PIL import Image
+        
+        # 1. Determine which Z index we are pulling (or the midpoint if a merge)
         if self.is_merged_preview:
             try:
                 z_start = max(0, min(int(self.spin_z_start.get()), self.max_z))
@@ -1203,6 +1252,7 @@ class PreProcessingTab(ttk.Frame):
             self.lbl_z_current.config(text=f"Previewing Merge: Stacks {z_start} to {z_end}")
             stack_slice = self.raw_volume[z_start:z_end+1]
             raw_data = np.max(stack_slice, axis=0) 
+            z_idx = int((z_start + z_end) // 2)  # Use middle slice for lookup cache
         else:
             z_idx = self.scale_z.get()
             self.lbl_z_current.config(text=f"Current Stack: {z_idx}")
@@ -1212,13 +1262,18 @@ class PreProcessingTab(ttk.Frame):
         if img_w == 0 or img_h == 0: 
             return 
 
-        # --- NEW: Process full-resolution image data first ---
-        # Apply contrast/brightness/LUT math to full raw array to preserve fidelity when zooming
-        full_res_processed = self.apply_image_math(raw_data)
-        self.current_pil_image = Image.fromarray(full_res_processed)
+        # --- 2. Pass z_idx to your optimized apply_image_math function ---
+        full_res_processed = self.apply_image_math(raw_data, z_idx)
+        
+        # --- 3. Cast float array 0.0-1.0 to uint8 if apply_image_math returns floats ---
+        if full_res_processed.dtype != np.uint8:
+            full_res_processed = (full_res_processed * 255.0).astype(np.uint8)
+            
+        # FIX: Update BOTH names so redraw_image never catches an empty property reference
+        self.original_pil_image = Image.fromarray(full_res_processed)
+        self.current_pil_image = self.original_pil_image
 
-        # --- NEW: Setup initial scale/offset only on first load ---
-        # If scale is uninitialized (1.0) or reset, fit it nicely inside the window bounds
+        # --- 4. Synchronize Viewport Coordinate Scales ---
         if not hasattr(self, '_initialized_view') or not self._initialized_view:
             canvas_w = self.canvas.winfo_width()
             canvas_h = self.canvas.winfo_height()
@@ -1226,15 +1281,18 @@ class PreProcessingTab(ttk.Frame):
                 canvas_w, canvas_h = 800, 600
             
             fit_scale = min(canvas_w / img_w, canvas_h / img_h)
-            self.img_scale = fit_scale
-            self.scale_x = fit_scale  # For your scale bar logic
+            self.zoom_scale = fit_scale   
+            self.img_scale = fit_scale    # Sync fallback
+            self.scale_x = fit_scale      
             
-            # Center the view frame
-            self.img_offset_x = (canvas_w - int(img_w * fit_scale)) // 2
-            self.img_offset_y = (canvas_h - int(img_h * fit_scale)) // 2
+            # Center the view frame uniformly across variables
+            self.img_x = (canvas_w - int(img_w * fit_scale)) // 2  
+            self.img_y = (canvas_h - int(img_h * fit_scale)) // 2  
+            self.img_offset_x = self.img_x
+            self.img_offset_y = self.img_y
             self._initialized_view = True
 
-        # Render the viewport layout
+        # 5. Render viewport instantly from cached RAM array
         self.redraw_image()
 
     def redraw_image(self):
@@ -1242,31 +1300,38 @@ class PreProcessingTab(ttk.Frame):
         if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
             return
 
+        from PIL import ImageTk
+        import tkinter as tk
+
         self.canvas.delete("all")
 
-        # Sync scale parameters for dependencies like scale bar calculation
-        self.scale_x = self.img_scale
+        # --- THE FIX: Maintain active offsets, do NOT overwrite master zoom variables! ---
+        self.img_scale = self.zoom_scale
+        self.scale_x = self.zoom_scale
+        self.img_offset_x = self.img_x
+        self.img_offset_y = self.img_y
 
-        # Calculate dynamic dimension vectors
+        # Calculate dynamic dimension vectors using zoom_scale variable
         orig_w, orig_h = self.current_pil_image.size
-        new_w = max(1, int(orig_w * self.img_scale))
-        new_h = max(1, int(orig_h * self.img_scale))
+        new_w = max(1, int(orig_w * self.zoom_scale))
+        new_h = max(1, int(orig_h * self.zoom_scale))
 
         # Resize cached high-res slice using nearest neighbor for performance speed
         resized_img = self.current_pil_image.resize((new_w, new_h), Image.Resampling.NEAREST)
         self.tk_img = ImageTk.PhotoImage(resized_img)
 
         # Draw image on canvas using absolute offset registers
-        self.canvas.create_image(self.img_offset_x, self.img_offset_y, anchor=tk.NW, image=self.tk_img)
+        self.canvas.create_image(self.img_x, self.img_y, anchor=tk.NW, image=self.tk_img)
         self.rect_id = None 
 
         # Re-render cropping selection bounding boxes if actively drawn
-        if self.current_rect:
+        if hasattr(self, 'current_rect') and self.current_rect:
             x1, y1, x2, y2 = self.current_rect
-            cx1 = x1 * self.img_scale + self.img_offset_x
-            cy1 = y1 * self.img_scale + self.img_offset_y
-            cx2 = x2 * self.img_scale + self.img_offset_x
-            cy2 = y2 * self.img_scale + self.img_offset_y
+            # Map raw coordinates back to canvas viewport space for proper rendering
+            cx1 = x1 * self.zoom_scale + self.img_x
+            cy1 = y1 * self.zoom_scale + self.img_y
+            cx2 = x2 * self.zoom_scale + self.img_x
+            cy2 = y2 * self.zoom_scale + self.img_y
             self.rect_id = self.canvas.create_rectangle(cx1, cy1, cx2, cy2, outline="red", width=2)
 
         # Draw scale bar dynamically on top layer

@@ -15,13 +15,13 @@ def resource_path(relative_path):
 # Import your separated tabs!
 from tab1_preprocessing import PreProcessingTab
 from tab2_quantification import QuantificationTab
-from tab3_golgi import GolgiTab 
-from tab4_representation import MaskMergerTab
+from tab3_representation import MaskMergerTab
+from tab4_golgi import GolgiTab 
 
 class CytoQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CytoQuant Version 15")
+        self.root.title("CytoQuant Version 17")
         self.root.geometry("1920x1080") # Adjust default size as needed
         
         # Load the Icon safely using the resource_path function
@@ -41,13 +41,13 @@ class CytoQuantApp:
         self.tab2 = QuantificationTab(self.notebook)
         self.notebook.add(self.tab2, text="2. Image Analysis (2D)       ")
 
-        # Initialize and add Tab 3
-        self.tab3 = GolgiTab(self.notebook)
-        self.notebook.add(self.tab3, text="3. Golgi Analysis (Beta)     ")
-
         # Initialize and add Tab 4  <-- NEW
-        self.tab4 = MaskMergerTab(self.notebook, self)
-        self.notebook.add(self.tab4, text="4. Figure Layer Merger       ")
+        self.tab3 = MaskMergerTab(self.notebook, self)
+        self.notebook.add(self.tab3, text="3. Figure Layer Merger       ")
+
+        # Initialize and add Tab 3
+        self.tab4 = GolgiTab(self.notebook)
+        self.notebook.add(self.tab4, text="4. Golgi Analysis (Beta)     ")
 
 if __name__ == "__main__":
     root = tk.Tk()
