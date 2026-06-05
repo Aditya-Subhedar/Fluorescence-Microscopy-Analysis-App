@@ -39,13 +39,13 @@ class CytoQuantApp:
 
         # Initialize and add Tab 2
         self.tab2 = QuantificationTab(self.notebook)
-        self.notebook.add(self.tab2, text="2. Image Analysis (2D)       ")
-
-        # Initialize and add Tab 4  <-- NEW
-        self.tab3 = MaskMergerTab(self.notebook, self)
-        self.notebook.add(self.tab3, text="3. Figure Layer Merger       ")
+        self.notebook.add(self.tab2, text="2. Quantification (2D)       ")
 
         # Initialize and add Tab 3
+        self.tab3 = MaskMergerTab(self.notebook, self)
+        self.notebook.add(self.tab3, text="3. Representation       ")
+
+        # Initialize and add Tab 4
         self.tab4 = GolgiTab(self.notebook)
         self.notebook.add(self.tab4, text="4. Golgi Analysis (Beta)     ")
 
