@@ -272,7 +272,8 @@ class PreProcessingTab(ttk.Frame):
 # --- Preview zoom and pan ---
     def on_zoom(self, event):
         """Handles zoom gestures, preventing zooming out past full-window fit."""
-        if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
+        # --- THE FIX: Look for the active raw matrix slice instead of the missing PIL image ---
+        if not hasattr(self, 'active_raw_slice') or self.active_raw_slice is None:
             return
 
         # Determine zoom direction step vector
@@ -291,7 +292,8 @@ class PreProcessingTab(ttk.Frame):
         if canvas_w < 10: 
             canvas_w, canvas_h = 800, 600
 
-        orig_w, orig_h = self.current_pil_image.size
+        # --- THE FIX: Get original size from the raw matrix shape [Height, Width] ---
+        orig_h, orig_w = self.active_raw_slice.shape[:2]
         fit_scale = min(canvas_w / orig_w, canvas_h / orig_h)
         
         # Calculate what the new scale would be
@@ -333,7 +335,8 @@ class PreProcessingTab(ttk.Frame):
 
     def reset_view_layout(self, event=None):
         """Instantly resets zoom factor and centers the image on the canvas."""
-        if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
+        # --- THE FIX: Match structural verification properties ---
+        if not hasattr(self, 'active_raw_slice') or self.active_raw_slice is None:
             return
             
         canvas_w = self.canvas.winfo_width()
@@ -341,7 +344,8 @@ class PreProcessingTab(ttk.Frame):
         if canvas_w < 10: 
             canvas_w, canvas_h = 800, 600
             
-        orig_w, orig_h = self.current_pil_image.size
+        # --- THE FIX: Extract from array shape ---
+        orig_h, orig_w = self.active_raw_slice.shape[:2]
         fit_scale = min(canvas_w / orig_w, canvas_h / orig_h)
         
         self.img_scale = fit_scale
@@ -353,6 +357,7 @@ class PreProcessingTab(ttk.Frame):
         self.img_y = self.img_offset_y
         
         self.redraw_image()
+
 
     def on_pan_start(self, event):
         """Initializes coordinates for drag-panning and changes cursor shape."""
@@ -1366,7 +1371,6 @@ class PreProcessingTab(ttk.Frame):
         # 4. Render scale bar overlay layer dynamically
         if hasattr(self, 'draw_scale_bar'):
             self.draw_scale_bar()
-
 
     # --- Saving ---
     def save_image_to_disk(self):
