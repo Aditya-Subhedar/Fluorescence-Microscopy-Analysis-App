@@ -1121,22 +1121,25 @@ class PreProcessingTab(ttk.Frame):
                 if p_max <= p_min: p_max = p_min + 1
                 self.channel_baselines.append({'min': float(p_min), 'max': float(p_max)})
 
-            # --- NEW: Pre-calculate Percentiles for All Individual Z-Slices ---
-            # This completely removes the np.percentile calculation overhead from the slider loop
+            # --- OPTIMIZED FAST CACHE: Downsample spatially (::4) to calculate percentiles instantly ---
             self.z_percentiles = {}
             for z in range(self.max_z + 1):
                 self.z_percentiles[z] = []
-                for c in range(min(3, img.shape[3])):  # Loop through available R, G, B channels
-                    ch_data = self.raw_volume[z, :, :, c]
-                    p_min, p_max = np.percentile(ch_data, (1.0, 99.9))
+                for c in range(min(3, img.shape[3])): 
+                    # Spatial striding (::4) extracts data instantly without losing histogram profile shape
+                    ch_data_sampled = self.raw_volume[z, ::4, ::4, c]
+                    p_min, p_max = np.percentile(ch_data_sampled, (1.0, 99.9))
                     val_range = (p_max - p_min) if (p_max - p_min) > 0 else 1.0
                     self.z_percentiles[z].append((p_min, val_range))
 
             # Initialize Zoom/Pan tracking variables if not already set
             if not hasattr(self, 'zoom_scale'):
                 self.zoom_scale = 1.0
+                self.img_scale = 1.0
                 self.img_x = 0
                 self.img_y = 0
+                self.img_offset_x = 0
+                self.img_offset_y = 0
 
             # Update UI Sliders
             self.scale_z.config(to=self.max_z)
@@ -1160,11 +1163,17 @@ class PreProcessingTab(ttk.Frame):
             self.canvas.delete("all")
 
     # --- Processing ---
-    def apply_image_math(self, image_multi, current_z):
+    def apply_image_math(self, image_multi, current_z=None):
         """Processes contrast and brightness using cached percentile values."""
         import numpy as np
         h, w, c_total = image_multi.shape
         
+        # If no Z index is provided, default to the slider's current position
+        if current_z is None and hasattr(self, 'scale_z'):
+            current_z = int(self.scale_z.get())
+        elif current_z is None:
+            current_z = 0
+
         channel_params = [
             (self.adj_data["Red (Alexa 568)"]["c"], self.adj_data["Red (Alexa 568)"]["b"], self.var_ch_r.get()),
             (self.adj_data["Green (Alexa 488)"]["c"], self.adj_data["Green (Alexa 488)"]["b"], self.var_ch_g.get()),
@@ -1180,24 +1189,22 @@ class PreProcessingTab(ttk.Frame):
             
             ch_data = image_multi[:, :, i].astype(np.float32)
             
-            # Use pre-cached values instead of recalculating via np.percentile
+            # Pull from cache if available
             if hasattr(self, 'z_percentiles') and current_z in self.z_percentiles and i < len(self.z_percentiles[current_z]):
                 p_min, val_range = self.z_percentiles[current_z][i]
             else:
-                p_min = 0.0
-                val_range = 1.0
+                # Quick vector calculation fallback if cache isn't available
+                p_min, p_max = np.percentile(ch_data, (1.0, 99.9))
+                val_range = (p_max - p_min) if (p_max - p_min) > 0 else 1.0
             
-            # 1. Normalize specifically within this dense data range
             norm_ch = (ch_data - p_min) / val_range
             norm_ch = np.clip(norm_ch, 0.0, 1.0)
             
-            # 2. Apply manual UI Contrast and Brightness
             norm_ch = (norm_ch * contrast) + brightness
             norm_ch = np.clip(norm_ch, 0.0, 1.0)
             
             processed_channels.append(norm_ch)
 
-        # --- THE FIX: Unpack the channels individually using explicit indices ---
         return self.apply_pseudo_colors(processed_channels[0], processed_channels[1], processed_channels[2])
 
     def apply_pseudo_colors(self, norm_r, norm_g, norm_b):
@@ -1232,14 +1239,13 @@ class PreProcessingTab(ttk.Frame):
         self.update_preview()
 
     def update_preview(self, event=None):
-        """Processes the active CZI stack frame at full resolution and caches it."""
+        """Fetches the active raw Z-slice and coordinates layout initialization."""
         if self.raw_volume is None: 
             return
         
         import numpy as np
-        from PIL import Image
         
-        # 1. Determine which Z index we are pulling (or the midpoint if a merge)
+        # 1. Pull the raw matrix data frame out of RAM cache
         if self.is_merged_preview:
             try:
                 z_start = max(0, min(int(self.spin_z_start.get()), self.max_z))
@@ -1251,29 +1257,18 @@ class PreProcessingTab(ttk.Frame):
                 
             self.lbl_z_current.config(text=f"Previewing Merge: Stacks {z_start} to {z_end}")
             stack_slice = self.raw_volume[z_start:z_end+1]
-            raw_data = np.max(stack_slice, axis=0) 
-            z_idx = int((z_start + z_end) // 2)  # Use middle slice for lookup cache
+            self.active_raw_slice = np.max(stack_slice, axis=0) 
+            self.current_z_idx = int((z_start + z_end) // 2)  
         else:
-            z_idx = self.scale_z.get()
-            self.lbl_z_current.config(text=f"Current Stack: {z_idx}")
-            raw_data = self.raw_volume[z_idx]
+            self.current_z_idx = self.scale_z.get()
+            self.lbl_z_current.config(text=f"Current Stack: {self.current_z_idx}")
+            self.active_raw_slice = self.raw_volume[self.current_z_idx]
 
-        img_h, img_w = raw_data.shape[:2]
+        img_h, img_w = self.active_raw_slice.shape[:2]
         if img_w == 0 or img_h == 0: 
             return 
 
-        # --- 2. Pass z_idx to your optimized apply_image_math function ---
-        full_res_processed = self.apply_image_math(raw_data, z_idx)
-        
-        # --- 3. Cast float array 0.0-1.0 to uint8 if apply_image_math returns floats ---
-        if full_res_processed.dtype != np.uint8:
-            full_res_processed = (full_res_processed * 255.0).astype(np.uint8)
-            
-        # FIX: Update BOTH names so redraw_image never catches an empty property reference
-        self.original_pil_image = Image.fromarray(full_res_processed)
-        self.current_pil_image = self.original_pil_image
-
-        # --- 4. Synchronize Viewport Coordinate Scales ---
+        # 2. Setup initial scale layout matrices on first boot pass
         if not hasattr(self, '_initialized_view') or not self._initialized_view:
             canvas_w = self.canvas.winfo_width()
             canvas_h = self.canvas.winfo_height()
@@ -1282,61 +1277,96 @@ class PreProcessingTab(ttk.Frame):
             
             fit_scale = min(canvas_w / img_w, canvas_h / img_h)
             self.zoom_scale = fit_scale   
-            self.img_scale = fit_scale    # Sync fallback
+            self.img_scale = fit_scale    
             self.scale_x = fit_scale      
             
-            # Center the view frame uniformly across variables
+            # Center coordinates across property registers
             self.img_x = (canvas_w - int(img_w * fit_scale)) // 2  
             self.img_y = (canvas_h - int(img_h * fit_scale)) // 2  
             self.img_offset_x = self.img_x
             self.img_offset_y = self.img_y
             self._initialized_view = True
 
-        # 5. Render viewport instantly from cached RAM array
+        # 3. Fire hybrid renderer loop
         self.redraw_image()
 
     def redraw_image(self):
-        """Resamples the full-resolution frame dynamically using active scale and offsets."""
-        if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
+        """Intelligently processes only the visible window viewport at high resolution."""
+        if not hasattr(self, 'active_raw_slice') or self.active_raw_slice is None:
             return
 
-        from PIL import ImageTk
+        import numpy as np
+        from PIL import Image, ImageTk
         import tkinter as tk
+        import cv2
 
         self.canvas.delete("all")
 
-        # --- THE FIX: Maintain active offsets, do NOT overwrite master zoom variables! ---
+        # Maintain global register synchronization definitions
         self.img_scale = self.zoom_scale
         self.scale_x = self.zoom_scale
         self.img_offset_x = self.img_x
         self.img_offset_y = self.img_y
 
-        # Calculate dynamic dimension vectors using zoom_scale variable
-        orig_w, orig_h = self.current_pil_image.size
-        new_w = max(1, int(orig_w * self.zoom_scale))
-        new_h = max(1, int(orig_h * self.zoom_scale))
+        orig_h, orig_w = self.active_raw_slice.shape[:2]
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        if canvas_w < 10: 
+            canvas_w, canvas_h = 800, 600
 
-        # Resize cached high-res slice using nearest neighbor for performance speed
-        resized_img = self.current_pil_image.resize((new_w, new_h), Image.Resampling.NEAREST)
-        self.tk_img = ImageTk.PhotoImage(resized_img)
+        # 1. Calculate bounding coordinates of what part of the image is inside the canvas
+        src_x1 = max(0, int(-self.img_x / self.zoom_scale))
+        src_y1 = max(0, int(-self.img_y / self.zoom_scale))
+        src_x2 = min(orig_w, int((canvas_w - self.img_x) / self.zoom_scale) + 1)
+        src_y2 = min(orig_h, int((canvas_h - self.img_y) / self.zoom_scale) + 1)
 
-        # Draw image on canvas using absolute offset registers
-        self.canvas.create_image(self.img_x, self.img_y, anchor=tk.NW, image=self.tk_img)
+        # Calculate where on the Tkinter canvas the cropped piece should actually start drawing
+        dest_x = max(self.img_x, self.img_x + int(src_x1 * self.zoom_scale))
+        dest_y = max(self.img_y, self.img_y + int(src_y1 * self.zoom_scale))
+
+        # Calculate width and height of the sub-view on screen
+        view_w = max(1, int((src_x2 - src_x1) * self.zoom_scale))
+        view_h = max(1, int((src_y2 - src_y1) * self.zoom_scale))
+
+        # --- HYBRID RENDERING STRATEGY ---
+        if self.zoom_scale > 1.0:
+            # STRATEGY A (Zoomed In): Extract full-resolution cropped region first, then process math
+            cropped_raw = self.active_raw_slice[src_y1:src_y2, src_x1:src_x2]
+            processed_sub_region = self.apply_image_math(cropped_raw, self.current_z_idx)
+            
+            # Resize processed chunk to match canvas footprint size
+            if processed_sub_region.dtype != np.uint8:
+                processed_sub_region = (processed_sub_region * 255.0).astype(np.uint8)
+                
+            view_image = cv2.resize(processed_sub_region, (view_w, view_h), interpolation=cv2.INTER_NEAREST)
+        else:
+            # STRATEGY B (Zoomed Out / Overview): Downsample first to remain fluid, then process math
+            cropped_raw = self.active_raw_slice[src_y1:src_y2, src_x1:src_x2]
+            downsampled_raw = cv2.resize(cropped_raw, (view_w, view_h), interpolation=cv2.INTER_NEAREST)
+            
+            view_image = self.apply_image_math(downsampled_raw, self.current_z_idx)
+            if view_image.dtype != np.uint8:
+                view_image = (view_image * 255.0).astype(np.uint8)
+
+        # 2. Render processed matrix data slice to screen
+        view_pil_image = Image.fromarray(view_image)
+        self.tk_img = ImageTk.PhotoImage(view_pil_image)
+        self.canvas.create_image(dest_x, dest_y, anchor=tk.NW, image=self.tk_img)
         self.rect_id = None 
 
-        # Re-render cropping selection bounding boxes if actively drawn
+        # 3. Re-render cropping selection bounding boxes if actively drawn
         if hasattr(self, 'current_rect') and self.current_rect:
             x1, y1, x2, y2 = self.current_rect
-            # Map raw coordinates back to canvas viewport space for proper rendering
             cx1 = x1 * self.zoom_scale + self.img_x
             cy1 = y1 * self.zoom_scale + self.img_y
             cx2 = x2 * self.zoom_scale + self.img_x
             cy2 = y2 * self.zoom_scale + self.img_y
             self.rect_id = self.canvas.create_rectangle(cx1, cy1, cx2, cy2, outline="red", width=2)
 
-        # Draw scale bar dynamically on top layer
+        # 4. Render scale bar overlay layer dynamically
         if hasattr(self, 'draw_scale_bar'):
             self.draw_scale_bar()
+
 
     # --- Saving ---
     def save_image_to_disk(self):
@@ -1354,11 +1384,15 @@ class PreProcessingTab(ttk.Frame):
                 if z_start > z_end: z_start, z_end = z_end, z_start
                 stack_slice = self.raw_volume[z_start:z_end+1]
                 target_data = np.max(stack_slice, axis=0) 
+                
+                # THE FIX: Pick the mid-point stack index for looking up your percentile math cache
+                export_z = int((z_start + z_end) // 2)
             else:
-                target_data = self.raw_volume[self.scale_z.get()]
+                export_z = self.scale_z.get()
+                target_data = self.raw_volume[export_z]
             
-            # 1. Calculate the RGB image
-            final_rgb = self.apply_image_math(target_data)
+            # --- THE FIX: Pass the precise target Z index to prevent positional argument errors ---
+            final_rgb = self.apply_image_math(target_data, current_z=export_z)
             
             # 2. Burn the scale bar into the image pixels
             final_rgb = self.stamp_scale_bar_for_export(final_rgb)
@@ -1389,8 +1423,7 @@ class PreProcessingTab(ttk.Frame):
                 final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(file_path, final_bgr) 
                 
-            # Removed the annoying Success messagebox so you can export in peace!
-            
         except Exception as e:
-            # We keep the error popup, because if it fails, you definitely want to know
+            import traceback
+            traceback.print_exc()
             messagebox.showerror("Save Error", f"Failed to save image:\n{e}")
