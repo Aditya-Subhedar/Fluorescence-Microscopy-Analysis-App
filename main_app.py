@@ -21,7 +21,7 @@ from tab4_golgi import GolgiTab
 class CytoQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CytoQuant Version 17")
+        self.root.title("CytoQuant Version 19")
         self.root.geometry("1920x1080") # Adjust default size as needed
         
         # Load the Icon safely using the resource_path function
