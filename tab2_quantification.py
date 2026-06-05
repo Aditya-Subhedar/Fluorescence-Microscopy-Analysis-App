@@ -12,6 +12,9 @@ from skimage import filters, measure
 # --> Import custom widget from widgets.pyk
 from widgets import ColorRangeSlider, SingleSlider
 from tkinter import colorchooser
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 
 class QuantificationTab(ttk.Frame):
     def __init__(self, parent):
@@ -50,7 +53,11 @@ class QuantificationTab(ttk.Frame):
         
         # Load presets from file if it exists
         self.load_presets_from_file()
-        # ------------------------------
+
+        # --- Caching Adjscent Images for smoother switching ----
+        self.image_cache = {}  # Format: {file_path: numpy_array}
+        self.cache_executor = ThreadPoolExecutor(max_workers=1)  # Dedicated background thread
+        self.cache_lock = threading.Lock()
 
         self.setup_ui()
 
@@ -190,8 +197,6 @@ class QuantificationTab(ttk.Frame):
     # --- Loadng ---
     def load_files(self):
         """Standalone loader for Tab 2: Disconnects from Tab 1 and loads files directly."""
-        
-        # ---> THE FIX: The Ultimate File Filter List <---
         filetypes = [
             ("All Supported Images", "*.tif *.tiff *.jpg *.jpeg *.jfif *.png *.czi *.JPG *.JPEG *.PNG"),
             ("JPEG Images", "*.jpg *.jpeg *.jfif *.JPG *.JPEG"),
@@ -199,25 +204,26 @@ class QuantificationTab(ttk.Frame):
             ("Scientific Images", "*.tif *.tiff *.czi"),
             ("All Files", "*.*")
         ]
-        
+            
         files = filedialog.askopenfilenames(title="Select Images for Analysis", filetypes=filetypes)
-                
         if not files: 
             return
-            
+                
         self.image_files = sorted(list(files))
         self.current_index = 0
         self.image_states = []
-        
+            
+        # --- NEW: Clear the cache for the new file pool ---
+        with self.cache_lock:
+            self.image_cache.clear()
+            
         for file_path in self.image_files:
             self.image_states.append({
                 'file_path': file_path,
                 'hue_min': 0, 
                 'hue_max': 179,
-                # ---> UPDATED: Swapped 'int_thresh' for min and max bounds <---
                 'int_min': 0,
                 'int_max': 255,
-                # ---> UPDATED: Swapped 'min_area_slider_pos' for min and max bounds <---
                 'area_min_pos': 30,
                 'area_max_pos': 1000,
                 'manual_mask_add': None, 
@@ -225,94 +231,176 @@ class QuantificationTab(ttk.Frame):
                 'undo_stack': [], 
                 'redo_stack': []  
             })
-        
-        # Trigger the loading of the first image in the array
+            
+        # Trigger loading the first image
         self.load_current_image_data()
 
+    def get_image_from_cache(self, path):
+        """Fetches an image from memory if cached; otherwise loads it synchronously."""
+        with self.cache_lock:
+            if path in self.image_cache:
+                return self.image_cache[path]
+            
+        # Fallback if not cached yet
+        img = self.load_raw_image_array(path)
+        if img is not None:
+            with self.cache_lock:
+                self.image_cache[path] = img
+        return img
+
+    def manage_cache_pipeline(self):
+        """Asynchronously manages memory: keeps adjacent images in RAM and drops old ones."""
+        if not hasattr(self, 'image_files') or not self.image_files:
+            return
+
+        total_files = len(self.image_files)
+        idx = self.current_index
+
+        # Define targets to keep: current image, next 2 images, previous 1 image
+        targets = set()
+        for offset in [0, 1, 2, -1]:
+            target_idx = idx + offset
+            if 0 <= target_idx < total_files:
+                targets.add(self.image_files[target_idx])
+
+        # Background thread task
+        def cache_worker():
+            # 1. Prune stale cache entries outside our window to save memory
+            with self.cache_lock:
+                stale_paths = [p for p in self.image_cache if p not in targets]
+                for p in stale_paths:
+                    del self.image_cache[p]
+
+            # 2. Prefetch required adjacent images into RAM
+            for path in targets:
+                with self.cache_lock:
+                    already_cached = path in self.image_cache
+                    
+                if not already_cached:
+                    img = self.load_raw_image_array(path)
+                    if img is not None:
+                        with self.cache_lock:
+                            self.image_cache[path] = img
+
+        # Dispatch worker task to the background executor thread
+        self.cache_executor.submit(cache_worker)
+
+
     def load_raw_image_array(self, path):
-        """Reads the raw file from disk (TIFF, CZI, JPEG, PNG) into a numpy array."""
+        """Reads a 2D image from disk. If a 3D TIFF is detected, safely flattens it via MIP."""
         try:
-            if path.lower().endswith('.czi'):
+            import tifffile
+            import numpy as np
+            import cv2
+            from PIL import Image
+
+            if path.lower().endswith(('.tif', '.tiff')):
+                # Use tifffile to read the complete TIFF data array structure
+                img = tifffile.imread(path)
+                
+                # --- SAFETY FALLBACK: Handle accidental 3D TIFF Inputs gracefully ---
+                # Check if the array has 3+ dimensions (e.g., [Slices, Height, Width] or [Slices, Height, Width, Channels])
+                if img.ndim >= 3 and img.shape[0] > 4 and img.shape[-1] != 3:
+                    # Treat the first axis as the Z-stack and generate a flat 2D Projection instantly
+                    print(f"Warning: 3D Multi-page TIFF detected at {os.path.basename(path)}. Flattening via MIP.")
+                    img = np.max(img, axis=0)
+                elif img.ndim == 3 and img.shape[0] <= 4:
+                    # This is just a standard 2D image with 3 or 4 color channels, reshape to HWC if needed
+                    pass
+            elif path.lower().endswith('.czi'):
+                # Fallback support if CZI images are selected directly
+                import czifile
                 img = czifile.imread(path)
                 img = np.squeeze(img)
                 if img.ndim == 3 and img.shape[0] < 10: 
                     img = np.transpose(img, (1, 2, 0))
                 if img.ndim > 3:
-                    img = img[0, ...] 
-            elif path.lower().endswith(('.tif', '.tiff')):
-                try:
-                    img = tifffile.imread(path)
-                except Exception:
-                    img = np.array(Image.open(path))
+                    # Flatten the raw CZI volume into a 2D maximum projection
+                    img = np.max(img, axis=0) 
             else:
-                # ---> THE FIX: Use Pillow instead of cv2 to load standard images <---
-                # .convert('RGB') automatically handles Grayscale and RGBA (PNGs with transparency)
+                # Use Pillow for standard formats (JPEG, PNG)
                 pil_img = Image.open(path).convert('RGB')
                 img = np.array(pil_img)
                     
             if img is None: return None
             
-            # Normalize to 8-bit if it's a 16-bit scientific image
+            # Normalize 16-bit or 32-bit scientific images down to standard 8-bit array
             if img.dtype != np.uint8:
                 img = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
             
-            # Handle grayscale scientific images
+            # Handle grayscale images by converting them to standard RGB matrices
             if len(img.shape) == 2:
                 img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
                 
             return img
         except Exception as e:
-            import tkinter.messagebox as messagebox
-            messagebox.showerror("Codec Error", f"Failed reading base image data:\n{e}")
+            import threading
+            if threading.current_thread() == threading.main_thread():
+                import tkinter.messagebox as messagebox
+                messagebox.showerror("Codec Error", f"Failed reading base image data:\n{e}")
+            else:
+                print(f"Background Cache Thread Warning: Failed reading {path}: {e}")
             return None
+
         
     def get_pixel_size_um(self, file_path):
-        """Attempts to extract pixel physical size from OME-TIFF or standard metadata."""
+        """Extracts the physical pixel size from the 2D TIFF exported by Tab 1."""
         try:
             from PIL import Image
             with Image.open(file_path) as img:
-                # 1. Try standard TIFF tags
-                if hasattr(img, 'tag'):
-                    x_res = img.tag_v2.get(282)
-                    unit = img.tag_v2.get(296)
+                # 1. Try reading the high-fidelity standard TIFF metadata tags
+                if hasattr(img, 'tag_v2'):
+                    x_res = img.tag_v2.get(282)  # Tag 282 = XResolution
+                    unit = img.tag_v2.get(296)   # Tag 296 = ResolutionUnit
+                    
                     if x_res and unit:
-                        num, den = x_res[0] if isinstance(x_res, tuple) else (x_res, 1)
-                        if num > 0:
+                        # Extract the primitive values regardless of if it is an IFDRational object or a tuple
+                        if hasattr(x_res, 'numerator') and hasattr(x_res, 'denominator'):
+                            num, den = x_res.numerator, x_res.denominator
+                        elif isinstance(x_res, (tuple, list)):
+                            num, den = x_res[0], x_res[1] if len(x_res) > 1 else 1
+                        else:
+                            num, den = float(x_res), 1
+
+                        if num > 0 and den > 0:
                             pixels_per_unit = num / den
-                            if unit == 3: return 10000.0 / pixels_per_unit # cm to um
-                            elif unit == 2: return 25400.0 / pixels_per_unit # inches to um
+                            # Unit 3 = Centimeters (1 cm = 10,000 um)
+                            if unit == 3: 
+                                return 10000.0 / pixels_per_unit
+                            # Unit 2 = Inches (1 inch = 25,400 um)
+                            elif unit == 2: 
+                                return 25400.0 / pixels_per_unit
                 
-                # 2. Try ImageJ or OME-TIFF (Leica/Zeiss) XML Description
+                # 2. Backup Fallback: Try reading ImageJ or OME-TIFF metadata strings inside ImageDescription
                 if 'ImageDescription' in img.info:
                     desc = str(img.info['ImageDescription'])
                     import re
                     
-                    # Check OME-TIFF XML standard
                     match_ome = re.search(r'PhysicalSizeX="([0-9.]+)"', desc)
                     if match_ome:
                         return float(match_ome.group(1))
                         
-                    # Check ImageJ standard
                     if 'unit=micron' in desc or 'unit=um' in desc:
                         match_ij = re.search(r'spacing=([0-9.]+)', desc)
-                        if match_ij: return float(match_ij.group(1))
+                        if match_ij: 
+                            return float(match_ij.group(1))
 
         except Exception as e:
-            print(f"Metadata extraction failed: {e}")
+            print(f"Metadata extraction fell back: {e}")
             
-        # ---> THE FIX: Return None if we cannot find the exact scale <---
         return None
 
+
     def load_current_image_data(self):
-        """Loads the current selected image into the UI."""
+        """Loads the current selected image into the UI using high-speed look-ahead memory extraction."""
         if self.current_index >= len(self.image_files) or not self.image_states: return
         
         state = self.image_states[self.current_index]
         file_path = state['file_path']
         
         try:
-            # ---> Loading from disk instead of memory! <---
-            self.original_image_rgb = self.load_raw_image_array(file_path)
+            # --- THE FIX: Pull from fast look-ahead RAM cache instead of slow disk operations ---
+            self.original_image_rgb = self.get_image_from_cache(file_path)
             
             if self.original_image_rgb is None: return
 
@@ -323,8 +411,6 @@ class QuantificationTab(ttk.Frame):
             # Grab metadata
             self.pixel_size_um = self.get_pixel_size_um(file_path)
 
-            if self.original_image_rgb is None: return
-            
             if state.get('manual_mask_add') is None:
                 state['manual_mask_add'] = np.zeros(self.original_image_rgb.shape[:2], dtype=np.uint8)
             if state.get('manual_mask_remove') is None:
@@ -342,39 +428,39 @@ class QuantificationTab(ttk.Frame):
             
             self._ignore_sliders = True 
             
-            # ---> FIXED: INTENSITY DUAL SLIDER <---
-            # Keep your clever Otsu thresholding for the minimum value on first load
+            # INTENSITY DUAL SLIDER
             if state.get('int_min') is None or state.get('int_min') == 0:
                 otsu_val = filters.threshold_otsu(self.cached_gray)
                 state['int_min'] = int(otsu_val)
-                state['int_max'] = 255 # Default to completely white for max
+                state['int_max'] = 255 
                 
             self.int_slider.set_values(state.get('int_min', 0), state.get('int_max', 255))
 
-            # ---> HUE SLIDER <---
+            # HUE SLIDER
             self.hue_slider.set_values(state.get('hue_min', 0), state.get('hue_max', 179))
             
-            # ---> FIXED: AREA DUAL SLIDER <---
+            # AREA DUAL SLIDER
             if 'area_min_pos' not in state: state['area_min_pos'] = 30
             if 'area_max_pos' not in state: state['area_max_pos'] = 1000
             
             self.area_slider.set_values(state['area_min_pos'], state['area_max_pos'])
 
-            # ---> NEW: CIRCULARITY SLIDER <---
+            # CIRCULARITY SLIDER
             if 'circ_min' not in state: state['circ_min'] = 0
             if 'circ_max' not in state: state['circ_max'] = 100
             
             self.circ_slider.set_values(state.get('circ_min', 0))
 
-
             self._ignore_sliders = False 
 
             self.process_image()
             
+            # --- NEW: Automatically start fetching adjacent images in the background ---
+            self.manage_cache_pipeline()
+            
         except Exception as e:
-            import os
-            import tkinter.messagebox as messagebox
-            messagebox.showerror("Error", f"Failed loading {os.path.basename(file_path)}:\n{e}")
+            import traceback
+            traceback.print_exc()
 
     # --- Mouse Events for Zooming and Scrooling ---
     def on_mousewheel_zoom(self, event):
