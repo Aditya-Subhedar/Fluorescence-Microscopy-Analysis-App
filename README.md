@@ -10,34 +10,30 @@ This application provides a robust, efficient, and accurate alternative to manua
 * **Robust File Support:** Robustly loads complex Zeiss CZI and multi-stack TIF files.
 * **Intelligent Dimension Correction:** Automatically resolves Z-slice/Color-Channel misalignment traps and unstitched mosaic issues inherent in raw python microscopy readers.
 * **Image Management:** Features a multi-image navigation bar supporting `askopenfilenames` (batch select) with keyboard arrow shortcut support (◀/▶) for streamlined workflow.
-* **Visual Balancing:** Real-time composite view with integrated standard color mapping, interactive cropping tools, and side-by-side Contrast/Brightness optimization optimized for high-resolution displays.
+* **Fluid Viewport Control:** Lag-free interactive canvas supporting precise scroll-wheel zooming and smooth click-and-drag panning.
+* **Fidelity Optimization:** Adaptive hybrid rendering engine that automatically switches processing workloads to match the viewport size, delivering crystal-clear full-resolution details during deep zoom passes without lagging.
 
 ### Tab 2: Automated & Manual Quantification
 * **Automated Segmentation:** Utilizes adaptive and Otsu's method thresholding for accurate object detection.
-* **Interactive Filtering:** Five real-time analysis sliders to filter objects by:
-    1. **Hue Range:** Select specific fluorescent color bands.
-    2. **Intensity (Min/Max):** Eliminate background noise and saturate signal.
-    3. **Area Size (px):** Exclude objects outside relevant size ranges.
-    4. **Circularity:** Avoid capturing elongated structures like nerve fibers, prioritizing cellular structures.
-* **Precision Edit Tools:** Interactive canvas supporting:
-    * **Manual Pencil/Eraser:** For pixel-perfect correction of automated segmentation.
-    * **Undo/Redo:** Full state history support for edit rollback.
-    * **Clear Drawings:** Instantly reset manual corrections.
-* **Automatic Reporting:** Real-time display of **Fluorescent Area %** and **Cluster Counts**, with automated, structured export directly to Microsoft Excel.
+* **Interactive Filtering:** Real-time analysis sliders to filter objects by Hue Range, Intensity (Min/Max), Area Size (px), and Circularity.
+* **Pre-Fetch Caching Engine:** Powered by an asynchronous background thread pool (`ThreadPoolExecutor`) that pre-loads adjacent images into RAM, enabling instant image switching with zero file-loading lag.
+* **Smart Window Reset:** Canvas interface equipped with automatic viewport centering on file load and instant 1.0x unzoom snap execution on canvas double-click.
+* **Precision Edit Tools:** Interactive canvas supporting manual pencil/eraser corrections, full state history (Undo/Redo), and automated exports to Microsoft Excel.
+* **Hardware Calibration Tracking:** Integrated spatial metadata extraction subsystem that decodes embedded OME-TIFF tags and native Zeiss CZI hardware XML parameters to calculate absolute fluorescent surface areas in micrometers ($\mu m^2$).
 
-### 📍 Tab 3: Golgi Morphological Profiling (Sholl Analysis)
+### 📍 Tab 3: Figure Layer Merger & Annotation
+* **Publication Figure Compositing:** Multi-layer alpha-channel blender that combines distinct custom-colored outline masks into a single composite asset.
+* **Microscopy Backdrop Superimposition:** Allows loading raw grayscale or multi-channel microscope files (`.tif`, `.jpeg`, `.png`) as the base layer, allowing users to overlay boundary vectors exactly on top of original cellular stain structures.
+* **Flexible Backdrop Management:** Full support for transparent exports (for custom downstream manuscript assemblies) or solid background colors (e.g., crisp print-ready solid white or black backdrops).
+* **Interactive Typography Overlays:** Built-in annotation suite supporting custom text, responsive font size scaling, and color configurations. 
+* **Draggable Canvas Layout Elements:** Features a cursor drag-and-drop system to position text annotations anywhere on the canvas workspace. Text coordinates stay locked to high-resolution pixels to prevent pixelation upon export.
+
+### 📍 Tab 4: Golgi Morphological Profiling (Sholl Analysis)
 * **Neuronal Architecture Mapping:** Specialized 2D analytical suite optimized for tracking complex cellular extensions, dendrite branching networks, and dendritic spine concentrations.
 * **Semi-Automated Sholl Calibration:** Interactive circle distance selection ($\mu m$) that automatically projects concentric bounding rings centered on the neuron's soma to calculate dendritic intersection densities at set radial distances.
 * **Synced Duplex Viewing Engine:** Features a side-by-side presentation board splitting the raw, contrast-adjusted microscope frame from the high-contrast binary overlay stencil to trace morphology in real time.
 * **Live Quantification Metrics:** Instant quantitative calculation tracking total detected spines, active spine frequencies within target ranges (e.g., $20\text{--}30\,\mu m$), and structural branch densities.
 * **Session Logging:** Single-click tabular compilation exporting complete morphological tracking history arrays straight into structured Excel/CSV sheets for downstream figure generation.
-
-### 📍 Tab 4: Figure Layer Merger & Annotation
-* **Publication Figure Compositing:** Multi-layer alpha-channel blender that combines distinct custom-colored outline masks (e.g., separate channels for Red, Green, or Blue regions) into a single composite asset.
-* **Microscopy Backdrop Superimposition:** Allows loading raw grayscale or multi-channel microscope files (`.tif`, `.jpeg`, `.png`) as the base layer, allowing users to overlay boundary vectors exactly on top of original cellular stain structures.
-* **Flexible Backdrop Management:** Full support for transparent exports (for custom downstream manuscript assemblies) or solid background colors (e.g., crisp print-ready solid white or black backdrops).
-* **Interactive Typography Overlays:** Built-in annotation suite supporting custom text, responsive font size scaling, and color configurations. 
-* **Draggable Canvas Layout Elements:** Features a cursor drag-and-drop system to position text annotations anywhere on the canvas workspace. Text coordinates stay locked to high-resolution pixels to prevent pixelation upon export.
 
 ---
 
@@ -45,7 +41,8 @@ This application provides a robust, efficient, and accurate alternative to manua
 
 * **GUI Engine:** Python `tkinter` + `ttk` widgets
 * **Image Processing Engine:** OpenCV (`cv2`), `scikit-image` (`measure`), NumPy
-* **I/O File Handlers:** Pillow (`PIL`), `czifile` image arrays
+* **I/O File Handlers:** Pillow (`PIL`), `czifile`, `pylibCZIrw`, `tifffile`
+* **Concurrency Engine:** `threading`, `concurrent.futures`
 * **Data Pipelines:** `pandas`, `openpyxl`
 
 ## Setup & Installation
@@ -72,7 +69,17 @@ Ensure you have Python 3.8+ installed.
 
 ## Usage
 
-Place your raw CZI images into the `IHC input images` directory (this folder is untracked by Git). Launch the application by running:
+Place your raw CZI/OME-TIFF images into any directory. Launch the application by running:
 
 ```bash
 python main_app.py
+
+
+## 📦 Compilation to Standalone Executable
+
+To compile the application into a standalone standalone desktop application (`.exe`) within your virtual environment, run the python module execution flag command:
+
+```bash
+python -m PyInstaller --onefile --windowed --icon=logo.ico --name="CytoQuant_V19" --hidden-import=czifile --hidden-import=pylibCZIrw --hidden-import=tifffile --hidden-import=skimage main_app.py
+```
+The finished production package will be placed inside the generated `dist/` directory.
