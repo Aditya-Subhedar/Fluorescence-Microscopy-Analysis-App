@@ -154,6 +154,7 @@ class QuantificationTab(ttk.Frame):
         # --- Trackpad / Mousewheel Bindings ---
         # 1. CTRL + Swipe (or Ctrl+Scroll) to ZOOM
         self.canvas.bind("<Control-MouseWheel>", self.on_mousewheel_zoom) 
+        self.canvas.bind("<Double-Button-1>", self.on_double_click)
         
         # 2. Normal Two-Finger Swipe to PAN (Move around)
         self.canvas.bind("<MouseWheel>", self.on_trackpad_scroll_y)       # Vertical swipe
@@ -285,7 +286,6 @@ class QuantificationTab(ttk.Frame):
         # Dispatch worker task to the background executor thread
         self.cache_executor.submit(cache_worker)
 
-
     def load_raw_image_array(self, path):
         """Reads a 2D image from disk. If a 3D TIFF is detected, safely flattens it via MIP."""
         try:
@@ -341,7 +341,6 @@ class QuantificationTab(ttk.Frame):
             else:
                 print(f"Background Cache Thread Warning: Failed reading {path}: {e}")
             return None
-
         
     def get_pixel_size_um(self, file_path):
         """Extracts the physical pixel size from the 2D TIFF exported by Tab 1."""
@@ -480,7 +479,15 @@ class QuantificationTab(ttk.Frame):
         true_y = (cy - getattr(self, 'pan_y', 0)) / getattr(self, 'zoom_factor', 1.0)
 
         new_zoom = getattr(self, 'zoom_factor', 1.0) * scale_change
-        new_zoom = max(0.1, min(new_zoom, 25.0)) # Allowing up to 25x zoom for fine details
+        
+        # --- THE FIX: Change minimum bound from 0.1 to 1.0 ---
+        if scale_change < 1.0 and new_zoom <= 1.01:
+            # If zooming out drops to or below 1.0, automatically snap and center
+            self.reset_and_center_view()
+            return
+        
+        # Enforce constraints (Hard 1.0x minimum, 25.0x maximum zoom)
+        new_zoom = max(1.0, min(new_zoom, 25.0))
         self.zoom_factor = new_zoom
 
         self.pan_x = cx - (true_x * self.zoom_factor)
@@ -488,6 +495,49 @@ class QuantificationTab(ttk.Frame):
 
         # REDRAW INSTANTLY USING CACHED IMAGE
         self.fast_redraw()
+
+    def reset_and_center_view(self, event=None):
+        """Instantly resets zoom factor to 1.0x and centers the image safely inside the canvas."""
+        if not hasattr(self, 'original_image_rgb') or self.original_image_rgb is None:
+            return
+
+        # Force Tkinter geometry updates to establish real canvas view space coordinates
+        self.canvas.update_idletasks()
+
+        # 1. Get true viewable viewport bounds (ignoring hidden overflow or outer frame borders)
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        
+        # Fallback if UI layout thread hasn't assigned space parameters yet
+        if canvas_w < 10 or canvas_h < 10:
+            try:
+                canvas_w = int(self.canvas.cget("width"))
+                canvas_h = int(self.canvas.cget("height"))
+            except Exception:
+                canvas_w, canvas_h = 800, 600
+
+        # 2. Extract true original image width and height dimensions
+        img_h, img_w = self.original_image_rgb.shape[:2]
+        
+        # 3. Lock zoom factor tightly to baseline 1.0x
+        self.zoom_factor = 1.0
+        
+        # 4. FIXED CENTERING: Apply explicit padding insulation subtraction to clear corner confusion
+        # This aligns the true center point of the image matrix with the viewport midpoint
+        self.pan_x = int((canvas_w - img_w) / 2.0)
+        self.pan_y = int((canvas_h - img_h) / 2.0)
+        
+        # Prevent any single-pixel clipping drifts by checking hard absolute minimum limits
+        if canvas_w <= img_w: self.pan_x = 0
+        if canvas_h <= img_h: self.pan_y = 0
+        
+        # Trigger layout refresh loop to draw the newly aligned frame positions
+        self.fast_redraw()
+
+    def on_double_click(self, event):
+        """Triggers when the user double-clicks to instantly unzoom to 1.0x and center."""
+        # Clean any phantom clicks or coordinates and center layout space
+        self.reset_and_center_view()
 
     def on_trackpad_scroll_y(self, event):
         # Explicitly check for Linux scroll buttons, otherwise use Mac/Windows delta
