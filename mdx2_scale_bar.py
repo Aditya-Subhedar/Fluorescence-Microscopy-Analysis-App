@@ -1,3 +1,6 @@
+# This file does not contribute to the fuctionality of the app.
+# The purpose of this file is to see CZI/OME-TIFF metadata (x_res for zoom and pixel-per-cm calculation) on console
+
 from pylibCZIrw import czi as pyczi
 import os
 

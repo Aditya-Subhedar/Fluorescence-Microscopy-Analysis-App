@@ -1,3 +1,6 @@
+# This file does not contribute to the fuctionality of the app.
+# The purpose of this file is to see CZI/OME-TIFF metadata (Color Format) on console
+
 from pylibCZIrw import czi as pyczi
 import os
 
