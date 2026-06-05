@@ -16,7 +16,7 @@ def resource_path(relative_path):
 from tab1_preprocessing import PreProcessingTab
 from tab2_quantification import QuantificationTab
 from tab3_representation import MaskMergerTab
-from tab4_golgi import GolgiTab 
+from tab4_golgi_cox_analysis import GolgiTab 
 
 class CytoQuantApp:
     def __init__(self, root):
