@@ -1,6 +1,9 @@
 czifile
+pylibCZIrw
 tifffile
 numpy
 opencv-python
 Pillow
+scikit-image
 openpyxl  # Needed for Excel export
+pyinstaller  # Needed for compiling to standalone executable
