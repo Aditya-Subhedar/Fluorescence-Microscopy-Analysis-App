@@ -194,15 +194,23 @@ class QuantificationTab(ttk.Frame):
 
         tk.Button(nav_frame, text="Next >>", command=self.next_image, font=("Arial", 10)).pack(side=tk.RIGHT)
 
-        # --- NEW: Global Keyboard Bindings for Tab 2 ---
+        # --- Global Keyboard Bindings for Tab 2 ---
         top = self.winfo_toplevel()
         
-        # Left/Right Arrows for Prev/Next
+        # Left/Right Arrows for Prev/Next File Navigation
         top.bind("<Left>", lambda e: self.prev_image() if self.winfo_ismapped() else None, add="+")
         top.bind("<Right>", lambda e: self.next_image() if self.winfo_ismapped() else None, add="+")
         
-        # Ctrl+O for Open/Select Images
+        # Ctrl+O for Open/Select Images File browser
         top.bind("<Control-o>", lambda e: self.load_files() if self.winfo_ismapped() else None, add="+")
+        top.bind("<Control-O>", lambda e: self.load_files() if self.winfo_ismapped() else None, add="+")
+
+        # --- NEW: Ctrl+Z and Ctrl+Y Hotkey Listeners ---
+        # Intercepts keyboard events and routes them to undo/redo systems safely if this tab is visible
+        top.bind("<Control-z>", lambda e: self.undo_action() if self.winfo_ismapped() else None, add="+")
+        top.bind("<Control-Z>", lambda e: self.undo_action() if self.winfo_ismapped() else None, add="+")
+        top.bind("<Control-y>", lambda e: self.redo_action() if self.winfo_ismapped() else None, add="+")
+        top.bind("<Control-Y>", lambda e: self.redo_action() if self.winfo_ismapped() else None, add="+")
         # -------------------------------------------------------
 
     # --- Loadng ---
