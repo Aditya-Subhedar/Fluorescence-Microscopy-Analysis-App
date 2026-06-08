@@ -2,6 +2,7 @@
 # Excludes raw input images and final generated output (Excel/Images)
 IHC input images/
 output_results/
+OFT Videos/
 
 # Excludes private branding asset
 logo.ico
