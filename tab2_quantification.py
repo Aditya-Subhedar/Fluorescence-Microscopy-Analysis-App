@@ -45,6 +45,13 @@ class QuantificationTab(ttk.Frame):
         self.offset_x = 0
         self.offset_y = 0
 
+        self.draw_mode = None          # Tracks "pencil", "eraser", or "circle"
+        self.active_oval = None        # Stores raw pixel coords: (center_x, center_y, radius_x, radius_y)
+        self.temp_oval_id = None       # Canvas item ID for dynamic dragging preview
+        self.handle_ids = []           # Canvas item IDs for active bounding box adjusters
+        self.active_handle = None      # Tracks which handle is currently dragged ("T", "B", "L", "R")
+
+
         # --- PRESET STATE VARIABLES ---
         self.presets_file = "cytoquant_presets.json"
         self.presets_collection = {} 
@@ -79,10 +86,13 @@ class QuantificationTab(ttk.Frame):
         tool_frame.pack(side=tk.LEFT, padx=10)
         tk.Label(tool_frame, text="Tools:", font=("Arial", 8)).pack(side=tk.LEFT)
         
-        self.btn_pencil = tk.Button(tool_frame, text="✏️ Pencil", relief=tk.SUNKEN, bg="lightgray", command=lambda: self.set_draw_mode("pencil"))
+        self.btn_pencil = tk.Button(tool_frame, text="✏️", relief=tk.SUNKEN, bg="lightgray", command=lambda: self.set_draw_mode("pencil"))
         self.btn_pencil.pack(side=tk.LEFT, padx=2)
+
+        self.btn_circle = tk.Button(tool_frame, text="⭕", width=3, command=lambda: self.set_draw_mode("circle"), font=("Arial", 10, "bold"))
+        self.btn_circle.pack(side=tk.LEFT, padx=1)
         
-        self.btn_eraser = tk.Button(tool_frame, text="🧹 Eraser", relief=tk.RAISED, command=lambda: self.set_draw_mode("eraser"))
+        self.btn_eraser = tk.Button(tool_frame, text="🧹", relief=tk.RAISED, command=lambda: self.set_draw_mode("eraser"))
         self.btn_eraser.pack(side=tk.LEFT, padx=2)
 
         self.btn_undo = tk.Button(tool_frame, text="↩️ Undo", command=self.undo_action)
@@ -389,7 +399,6 @@ class QuantificationTab(ttk.Frame):
             
         return None
 
-
     def load_current_image_data(self):
         """Loads the current selected image into the UI using high-speed look-ahead memory extraction."""
         if self.current_index >= len(self.image_files) or not self.image_states: return
@@ -563,18 +572,6 @@ class QuantificationTab(ttk.Frame):
         
         self.pan_x += delta
         self.fast_redraw()
-
-    # --- Drawing Mode (Draw / Erase) ---
-    def set_draw_mode(self, mode):
-        self.draw_mode = mode
-        if mode == "pencil":
-            self.btn_pencil.config(relief=tk.SUNKEN, bg="lightgray")
-            self.btn_eraser.config(relief=tk.RAISED, bg="SystemButtonFace")
-            self.canvas.config(cursor="crosshair")
-        else:
-            self.btn_eraser.config(relief=tk.SUNKEN, bg="lightgray")
-            self.btn_pencil.config(relief=tk.RAISED, bg="SystemButtonFace")
-            self.canvas.config(cursor="circle") 
 
     # --- Auto Detect for Segmentation of Fluorosent Regions ---
     def toggle_auto_detect(self):
@@ -866,6 +863,32 @@ class QuantificationTab(ttk.Frame):
         self.fast_redraw()
     
     # --- Drawing and Correction ---    
+    def set_draw_mode(self, mode):
+        """--- Drawing Mode (Pencil / Circle / Eraser) ---"""
+        self.draw_mode = mode
+        
+        # Reset and clear any uncommitted interactive circle adjustments
+        self.clear_active_oval_handles()
+        if hasattr(self, 'temp_oval_id') and self.temp_oval_id:
+            self.canvas.delete(self.temp_oval_id)
+            self.temp_oval_id = None
+
+        # Clean old button states down to standard style configurations
+        self.btn_pencil.config(relief=tk.RAISED, bg="SystemButtonFace")
+        self.btn_circle.config(relief=tk.RAISED, bg="SystemButtonFace")
+        self.btn_eraser.config(relief=tk.RAISED, bg="SystemButtonFace")
+
+        # Engage selected tool state styles and configurations
+        if mode == "pencil":
+            self.btn_pencil.config(relief=tk.SUNKEN, bg="lightgray")
+            self.canvas.config(cursor="crosshair")
+        elif mode == "eraser":
+            self.btn_eraser.config(relief=tk.SUNKEN, bg="lightgray")
+            self.canvas.config(cursor="circle")
+        elif mode == "circle":
+            self.btn_circle.config(relief=tk.SUNKEN, bg="lightgray")
+            self.canvas.config(cursor="tcross")
+
     def save_state_for_undo(self):
         if not self.image_states: return
         state = self.image_states[self.current_index]
@@ -879,6 +902,7 @@ class QuantificationTab(ttk.Frame):
         if not self.image_states: return
         state = self.image_states[self.current_index]
         if not state['undo_stack']: return
+        self.clear_active_oval_handles() # Dismiss active ovals before undo
         current_add = state['manual_mask_add'].copy()
         current_remove = state['manual_mask_remove'].copy()
         state['redo_stack'].append((current_add, current_remove))
@@ -893,6 +917,7 @@ class QuantificationTab(ttk.Frame):
         if not self.image_states: return
         state = self.image_states[self.current_index]
         if not state['redo_stack']: return
+        self.clear_active_oval_handles() # Dismiss active ovals before redo
         current_add = state['manual_mask_add'].copy()
         current_remove = state['manual_mask_remove'].copy()
         state['undo_stack'].append((current_add, current_remove))
@@ -904,70 +929,191 @@ class QuantificationTab(ttk.Frame):
         self.process_image()
 
     def start_draw(self, event):
-        self.save_state_for_undo() 
-        self.is_drawing = True
-        self.last_x, self.last_y = event.x, event.y
-        
-        # 1. Reverse the Pan & Zoom to get the base canvas coordinate
+        # 1. Reverse Pan & Zoom to get the base canvas coordinate
         canvas_x = (event.x - getattr(self, 'pan_x', 0)) / getattr(self, 'zoom_factor', 1.0)
         canvas_y = (event.y - getattr(self, 'pan_y', 0)) / getattr(self, 'zoom_factor', 1.0)
-        
-        # 2. Apply your original offset/scale to get the Numpy array coordinate
-        orig_x = int((canvas_x - getattr(self, 'offset_x', 0)) * getattr(self, 'scale_x', 1.0))
-        orig_y = int((canvas_y - getattr(self, 'offset_y', 0)) * getattr(self, 'scale_y', 1.0))
-        
-        self.draw_points_img = [(orig_x, orig_y)]
+
+        # 2. Check if user is adjusting an existing circle handle
+        if self.draw_mode == "circle" and getattr(self, 'handle_ids', None):
+            clicked_item = self.canvas.find_withtag("current")
+            if clicked_item and clicked_item[0] in self.handle_ids:
+                idx = self.handle_ids.index(clicked_item[0])
+                self.active_handle = ["T", "B", "L", "R"][idx]
+                return
+
+        # 3. Handle standard pencil/eraser click actions
+        if self.draw_mode in ("pencil", "eraser"):
+            self.clear_active_oval_handles() # Commit previous shapes if tool changed
+            self.save_state_for_undo() 
+            self.is_drawing = True
+            self.last_x, self.last_y = event.x, event.y
+            
+            orig_x = int((canvas_x - getattr(self, 'offset_x', 0)) * getattr(self, 'scale_x', 1.0))
+            orig_y = int((canvas_y - getattr(self, 'offset_y', 0)) * getattr(self, 'scale_y', 1.0))
+            self.draw_points_img = [(orig_x, orig_y)]
+            
+        # 4. Handle extra circle tool initiation click actions
+        elif self.draw_mode == "circle":
+            self.clear_active_oval_handles()
+            self.oval_start_x = canvas_x
+            self.oval_start_y = canvas_y
 
     def draw_motion(self, event):
-        if self.is_drawing:
+        # 1. Reverse Pan & Zoom
+        canvas_x = (event.x - getattr(self, 'pan_x', 0)) / getattr(self, 'zoom_factor', 1.0)
+        canvas_y = (event.y - getattr(self, 'pan_y', 0)) / getattr(self, 'zoom_factor', 1.0)
+
+        # Case A: Adjusting an existing shape using active boundary handles
+        if self.draw_mode == "circle" and getattr(self, 'active_handle', None) and getattr(self, 'active_oval', None):
+            cx, cy, rx_val, ry_val = self.active_oval
+            if self.active_handle == "L":   rx_val = abs(cx - canvas_x)
+            elif self.active_handle == "R": rx_val = abs(canvas_x - cx)
+            elif self.active_handle == "T": ry_val = abs(cy - canvas_y)
+            elif self.active_handle == "B": ry_val = abs(canvas_y - cy)
+            
+            self.active_oval = (cx, cy, rx_val, ry_val)
+            self.update_oval_visual_layer()
+            return
+
+        # Case B: Standard pencil or eraser dragging logic running natively
+        if self.draw_mode in ("pencil", "eraser") and getattr(self, 'is_drawing', False):
             if not self.auto_detect_enabled:
                 self.auto_detect_enabled = True
                 self.btn_auto.config(text="Auto Detect: ON", fg="white")
                 
-            color = "white" if self.draw_mode == "pencil" else "white"
-            
-            # The visual line is drawn directly on the Tkinter canvas using raw mouse coords!
+            color = "white"
             self.canvas.create_line(self.last_x, self.last_y, event.x, event.y, fill=color, width=2, capstyle=tk.ROUND)
             
-            # 1. Reverse the Pan & Zoom
-            canvas_x = (event.x - getattr(self, 'pan_x', 0)) / getattr(self, 'zoom_factor', 1.0)
-            canvas_y = (event.y - getattr(self, 'pan_y', 0)) / getattr(self, 'zoom_factor', 1.0)
-            
-            # 2. Apply original offset/scale
             orig_x = int((canvas_x - getattr(self, 'offset_x', 0)) * getattr(self, 'scale_x', 1.0))
             orig_y = int((canvas_y - getattr(self, 'offset_y', 0)) * getattr(self, 'scale_y', 1.0))
-            
             self.draw_points_img.append((orig_x, orig_y))
-                
             self.last_x, self.last_y = event.x, event.y
+            
+        # Case C: Dynamic circle initial shape stretching drag operations
+        elif self.draw_mode == "circle" and hasattr(self, 'oval_start_x'):
+            cx = self.oval_start_x
+            cy = self.oval_start_y
+            rx_val = max(1.0, abs(canvas_x - cx))
+            ry_val = max(1.0, abs(canvas_y - cy))
+            
+            self.active_oval = (cx, cy, rx_val, ry_val)
+            self.update_oval_visual_layer()
 
     def stop_draw(self, event):
-        self.is_drawing = False
-        
-        # Determine which mask we are editing
-        mask = self.current_manual_add if self.draw_mode == "pencil" else self.current_manual_remove
-        
-        if mask is not None and hasattr(self, 'draw_points_img') and len(self.draw_points_img) > 0:
-            if len(self.draw_points_img) > 2:
-                # If you drew a shape, connect the end to the start and fill the polygon
-                pts = np.array([self.draw_points_img], dtype=np.int32)
-                cv2.fillPoly(mask, pts, 255)
-            else:
-                # Fallback: If you just do a single mouse click without dragging, draw a small dot
-                # (We dynamically scale the dot down if you are zoomed in heavily so it doesn't blot out the screen!)
-                dynamic_radius = max(2, int(15 / getattr(self, 'zoom_factor', 1.0)))
-                cv2.circle(mask, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
+        # Case A: Handle standard pencil/eraser mask baking loops
+        if self.draw_mode in ("pencil", "eraser") and getattr(self, 'is_drawing', False):
+            self.is_drawing = False
+            mask = self.current_manual_add if self.draw_mode == "pencil" else self.current_manual_remove
+            
+            if mask is not None and hasattr(self, 'draw_points_img') and len(self.draw_points_img) > 0:
+                if len(self.draw_points_img) > 2:
+                    pts = np.array([self.draw_points_img], dtype=np.int32)
+                    cv2.fillPoly(mask, pts, 255)
+                else:
+                    dynamic_radius = max(2, int(15 / getattr(self, 'zoom_factor', 1.0)))
+                    cv2.circle(mask, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
+                    
+            self.draw_points_img = [] 
+            self.process_image()
+            
+        # Case B: Circle tool mouse release - Lock initial size and spawn micro-handles
+        elif self.draw_mode == "circle":
+            if getattr(self, 'active_handle', None):
+                self.active_handle = None 
+                return
                 
-        self.draw_points_img = [] # Reset for the next drawing action
-        self.process_image()
+            if hasattr(self, 'oval_start_x') and getattr(self, 'active_oval', None):
+                del self.oval_start_x
+                self.render_oval_adjuster_handles()
 
     def clear_drawing(self):
         if not self.image_states or self.current_index >= len(self.image_states): return
+        self.clear_active_oval_handles() # Dismiss active ovals before clearing
         self.save_state_for_undo() 
         state = self.image_states[self.current_index]
         if state['manual_mask_add'] is not None: state['manual_mask_add'].fill(0)
         if state['manual_mask_remove'] is not None: state['manual_mask_remove'].fill(0)
         self.process_image()
+
+    # --- NEW INTERACTIVE CIRCLE GEOMETRY METHODS ---
+    def update_oval_visual_layer(self):
+        """Draws or moves the visual preview dashed ellipse vector overlay onto the canvas map."""
+        if not getattr(self, 'active_oval', None): return
+        cx, cy, rx, ry = self.active_oval
+        
+        # Translate canvas points forward through Pan/Zoom parameters onto display viewport
+        x1 = (cx - rx) * self.zoom_factor + self.pan_x
+        y1 = (cy - ry) * self.zoom_factor + self.pan_y
+        x2 = (cx + rx) * self.zoom_factor + self.pan_x
+        y2 = (cy + ry) * self.zoom_factor + self.pan_y
+
+        if getattr(self, 'temp_oval_id', None):
+            self.canvas.coords(self.temp_oval_id, x1, y1, x2, y2)
+        else:
+            self.temp_oval_id = self.canvas.create_oval(
+                x1, y1, x2, y2, outline="yellow", width=2, dash=(4, 4)
+            )
+
+    def render_oval_adjuster_handles(self):
+        """Creates 4 adjustable side knobs on Top, Bottom, Left, and Right shape bounds."""
+        self.clear_active_oval_handles()
+        if not getattr(self, 'active_oval', None): return
+        cx, cy, rx, ry = self.active_oval
+        hr = 5  # Handle handle graphics dot diameter footprint
+        
+        if not hasattr(self, 'handle_ids'): 
+            self.handle_ids = []
+
+        # Coordinate anchor vectors
+        positions = [
+            (cx, cy - ry),  # Top
+            (cx, cy + ry),  # Bottom
+            (cx - rx, cy),  # Left
+            (cx + rx, cy)   # Right
+        ]
+
+        for px, py in positions:
+            chx = px * self.zoom_factor + self.pan_x
+            chy = py * self.zoom_factor + self.pan_y
+            hid = self.canvas.create_oval(
+                chx - hr, chy - hr, chx + hr, chy + hr, 
+                fill="cyan", outline="white", width=1
+            )
+            self.handle_ids.append(hid)
+
+    def clear_active_oval_handles(self):
+        """Bakes adjusted ellipse permanently into masks and deletes overlay graphics nodes."""
+        if getattr(self, 'handle_ids', None):
+            for hid in self.handle_ids:
+                self.canvas.delete(hid)
+            self.handle_ids = []
+
+        if getattr(self, 'active_oval', None):
+            cx, cy, rx, ry = self.active_oval
+            
+            # Translate canvas pixels back to match the offset/scale variables of the underlying raw file matrix
+            orig_cx = int((cx - getattr(self, 'offset_x', 0)) * getattr(self, 'scale_x', 1.0))
+            orig_cy = int((cy - getattr(self, 'offset_y', 0)) * getattr(self, 'scale_y', 1.0))
+            orig_rx = int(rx * getattr(self, 'scale_x', 1.0))
+            orig_ry = int(ry * getattr(self, 'scale_y', 1.0))
+            
+            if self.current_manual_add is not None and orig_rx > 0 and orig_ry > 0:
+                if not self.auto_detect_enabled:
+                    self.auto_detect_enabled = True
+                    self.btn_auto.config(text="Auto Detect: ON", fg="white")
+                    
+                self.save_state_for_undo()
+                cv2.ellipse(
+                    self.current_manual_add, (orig_cx, orig_cy), (orig_rx, orig_ry), 
+                    0, 0, 360, 255, -1
+                )
+                
+            self.active_oval = None
+            if getattr(self, 'temp_oval_id', None):
+                self.canvas.delete(self.temp_oval_id)
+                self.temp_oval_id = None
+                
+            self.process_image()
 
     # --- PRESET SAVING & LOADING ---
     def load_presets_from_file(self):
