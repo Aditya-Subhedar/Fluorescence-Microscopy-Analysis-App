@@ -59,8 +59,8 @@ class OFTTrackingTab(ttk.Frame):
         # Kinematics & Tracking 
         self.smoothed_cx = None
         self.smoothed_cy = None
-        self.inertia_alpha = 0.05 
-        self.velocity_deadzone_cm = 0.40 
+        self.inertia_alpha = 0.1
+        self.velocity_deadzone_cm = 7.5
         self.bg_subtractor = None
         self.tracking_active = False
         
