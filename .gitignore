@@ -6,6 +6,7 @@ OFT Videos/
 
 # Excludes private branding asset
 logo.ico
+cytoquant_presets.json
 
 # --- Python Build and Runtime Artifacts ---
 # PyInstaller output
