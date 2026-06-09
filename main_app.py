@@ -15,14 +15,14 @@ def resource_path(relative_path):
 from tab1_preprocessing import PreProcessingTab
 from tab2_quantification import QuantificationTab
 from tab3_representation import MaskMergerTab
-from tab4_plate_creation import PlateCreationPlaceholderTab 
+from tab4_panel_creation import PanelCreationTab 
 from tab5_golgi_cox_analysis import GolgiTab
 from tab6_oft_tracking import OFTTrackingTab
 
 class CytoQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CytoQuant Version 19")
+        self.root.title("CytoQuant Version 20")
         self.root.geometry("1920x1080")
 
         # Load Icon
@@ -47,8 +47,8 @@ class CytoQuantApp:
         self.notebook.add(self.tab3, text="3. Representation    ")
 
         # Tab 4: Plate Creation (Placeholder)
-        self.tab4 = PlateCreationPlaceholderTab(self.notebook)
-        self.notebook.add(self.tab4, text="4. Plate Creation    ")
+        self.tab4 = PanelCreationTab(self.notebook, self)
+        self.notebook.add(self.tab4, text="4. Panel Creation    ")
 
         # Tab 5: Golgi-Cox Analysis
         self.tab5 = GolgiTab(self.notebook)
