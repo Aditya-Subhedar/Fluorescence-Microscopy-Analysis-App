@@ -5,5 +5,5 @@ numpy
 opencv-python
 Pillow
 scikit-image
-openpyxl  # Needed for Excel export
-pyinstaller  # Needed for compiling to standalone executable
+openpyxl
+pyinstaller  # Needed for compiling to standalone executable (Optional)
