@@ -16,6 +16,7 @@ class MaskMergerTab(ttk.Frame):
         self.mask_paths = []
         self.composite_pil = None
         self.tk_img = None
+        self.global_rotation = 0  # Tracks absolute rotation state
         
         # Annotation & Gesture Variables
         self.annotations = []
@@ -58,12 +59,21 @@ class MaskMergerTab(ttk.Frame):
         # 2. Background Settings
         bg_frame = tk.LabelFrame(left_panel, text="🖼️ Background Settings", font=("Arial", 9, "bold"), padx=5, pady=5)
         bg_frame.pack(fill=tk.X, pady=5)
+        
         self.btn_load_microscope = tk.Button(bg_frame, text="🔬 Load Base Image", command=self.load_microscope_image, bg="#673ab7", fg="white")
         self.btn_load_microscope.pack(fill=tk.X, pady=(2, 0))
+        
         self.lbl_microscope_name = tk.Label(bg_frame, text="No base image loaded", fg="gray", font=("Arial", 8, "italic"), wraplength=230)
         self.lbl_microscope_name.pack(fill=tk.X, pady=(0, 4))
+        
         self.btn_bg_color = tk.Button(bg_frame, text="🎨 Select Solid Color", command=self.pick_background_color, bg="#424242", fg="white")
         self.btn_bg_color.pack(fill=tk.X, pady=2)
+
+        # ROTATION CONTROLS
+        rot_frame = tk.Frame(bg_frame)
+        rot_frame.pack(fill=tk.X, pady=(4, 2))
+        tk.Button(rot_frame, text="↺ CCW", command=self.action_rotate_ccw, bg="#ff9800", fg="black").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        tk.Button(rot_frame, text="↻ CW", command=self.action_rotate_cw, bg="#ff9800", fg="black").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         
         # 3. Interactive Figure Tools
         tool_frame = tk.LabelFrame(left_panel, text="🔤 Interactive Tools", font=("Arial", 9, "bold"), padx=5, pady=5)
@@ -123,6 +133,45 @@ class MaskMergerTab(ttk.Frame):
         toplevel.bind("<Control-y>", self.redo)
         toplevel.bind("<Control-s>", self.export_merged_figure)
 
+    # --- ACTION HANDLERS ---
+    def action_rotate_cw(self):
+        """Rotates 90° Clockwise"""
+        if not self.composite_pil: return
+        old_w, old_h = self.composite_pil.size
+        
+        # PIL rotate is CCW by default, so subtract 90 for CW
+        self.global_rotation = (self.global_rotation - 90) % 360
+        
+        # Matrix translation for annotations to match CW rotation
+        for anno in self.annotations:
+            old_x, old_y = anno["x"], anno["y"]
+            anno["x"] = old_h - old_y
+            anno["y"] = old_x
+            if "angle" in anno:
+                anno["angle"] = (anno["angle"] + 90) % 360
+                
+        self.generate_composite()
+        self.save_state()
+
+    def action_rotate_ccw(self):
+        """Rotates 90° Counter-Clockwise"""
+        if not self.composite_pil: return
+        old_w, old_h = self.composite_pil.size
+        
+        # PIL rotate is CCW by default, so add 90 for CCW
+        self.global_rotation = (self.global_rotation + 90) % 360
+        
+        # Matrix translation for annotations to match CCW rotation
+        for anno in self.annotations:
+            old_x, old_y = anno["x"], anno["y"]
+            anno["x"] = old_y
+            anno["y"] = old_w - old_x
+            if "angle" in anno:
+                anno["angle"] = (anno["angle"] - 90) % 360
+                
+        self.generate_composite()
+        self.save_state()
+
     # --- UNDO / REDO LOGIC ---
     def save_state(self):
         self.undo_stack.append(copy.deepcopy(self.annotations))
@@ -131,7 +180,7 @@ class MaskMergerTab(ttk.Frame):
             self.undo_stack.pop(0)
 
     def undo(self, event=None):
-        self.finalize_inline_text()  # Clean up typing if active
+        self.finalize_inline_text()  
         if len(self.undo_stack) > 1:
             self.redo_stack.append(self.undo_stack.pop())
             self.annotations = copy.deepcopy(self.undo_stack[-1])
@@ -467,17 +516,28 @@ class MaskMergerTab(ttk.Frame):
             self.canvas.delete("all")
             return
         
+        # Load Base Image
         if self.microscope_image_path:
             master = Image.open(self.microscope_image_path).convert("RGBA")
         else:
             first = Image.open(self.mask_paths[0]).convert("RGBA")
             master = Image.new("RGBA", first.size, self.bg_color_rgb + (255,) if self.bg_color_rgb else (0,0,0,255))
             
+        # Apply Global Rotation
+        if self.global_rotation % 360 != 0:
+            master = master.rotate(self.global_rotation, expand=True, resample=Image.Resampling.BICUBIC)
+            
         w, h = master.size
+        
+        # Overlay Masks
         for path in self.mask_paths:
             layer = Image.open(path).convert("RGBA")
-            if layer.size != (w, h): layer = layer.resize((w, h), Image.Resampling.NEAREST)
+            if self.global_rotation % 360 != 0:
+                layer = layer.rotate(self.global_rotation, expand=True, resample=Image.Resampling.BICUBIC)
+            if layer.size != (w, h): 
+                layer = layer.resize((w, h), Image.Resampling.NEAREST)
             master.alpha_composite(layer)
+            
         self.composite_pil = master
         self.render_preview()
 
@@ -488,12 +548,24 @@ class MaskMergerTab(ttk.Frame):
         if not path: return
         
         w, h = self.composite_pil.size
-        exp = Image.open(self.microscope_image_path).convert("RGBA") if self.microscope_image_path else Image.new("RGBA", (w, h), self.bg_color_rgb + (255,) if self.bg_color_rgb else (0,0,0,255))
+        
+        # Build Export Master Setup with Rotation Logic
+        if self.microscope_image_path:
+            exp = Image.open(self.microscope_image_path).convert("RGBA")
+            if self.global_rotation % 360 != 0:
+                exp = exp.rotate(self.global_rotation, expand=True, resample=Image.Resampling.BICUBIC)
+        else:
+            exp = Image.new("RGBA", (w, h), self.bg_color_rgb + (255,) if self.bg_color_rgb else (0,0,0,255))
+            
         for p in self.mask_paths:
             l = Image.open(p).convert("RGBA")
-            if l.size != (w, h): l = l.resize((w, h), Image.Resampling.NEAREST)
+            if self.global_rotation % 360 != 0:
+                l = l.rotate(self.global_rotation, expand=True, resample=Image.Resampling.BICUBIC)
+            if l.size != (w, h): 
+                l = l.resize((w, h), Image.Resampling.NEAREST)
             exp.alpha_composite(l)
             
+        # Embed Annotations
         draw = ImageDraw.Draw(exp)
         for a in self.annotations:
             rgba = a["color"] + (255,)
