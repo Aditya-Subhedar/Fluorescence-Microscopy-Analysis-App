@@ -26,14 +26,30 @@ This application provides a robust, efficient, and accurate alternative to manua
 * **Microscopy Backdrop Superimposition:** Allows loading raw grayscale or multi-channel microscope files (`.tif`, `.jpeg`, `.png`) as the base layer, allowing users to overlay boundary vectors exactly on top of original cellular stain structures.
 * **Flexible Backdrop Management:** Full support for transparent exports (for custom downstream manuscript assemblies) or solid background colors (e.g., crisp print-ready solid white or black backdrops).
 * **Interactive Typography Overlays:** Built-in annotation suite supporting custom text, responsive font size scaling, and color configurations. 
-* **Draggable Canvas Layout Elements:** Features a cursor drag-and-drop system to position text annotations anywhere on the canvas workspace. Text coordinates stay locked to high-resolution pixels to prevent pixelation upon export.
+* **Draggable Canvas Layout Elements:** Features a cursor drag-and-drop system to position text annotations anywhere on the canvas workspace. Text coordinates stay locked to high-resolution pixels to prevent pixelation upon image rotation and image export.
 
-### 📍 Tab 4: Golgi Morphological Profiling (Sholl Analysis)
+### 📍 Tab 4: Multi-Image Publication Panel Creator
+* **Interactive Matrix Generation:** Generates a clean, structural layout matrix based on custom row and column configurations with an explicit image allocation wizard built into every cell.
+* **Geometric Aspect Ratio Presets:** Configures cell bounds using standard scientific presentation formats (Square 1:1, Landscape 4:3, Portrait 3:4) with adjustable inter-image pixel gaps.
+* **On-Canvas Image Previews:** Loads raw image assets directly into targeted grid placeholders, instantly rendering downscaled thumbnails alongside automated aspect ratio mismatch safety warnings.
+* **Automated Subpanel Indexing:** Includes a sequential lettering engine (e.g., A., B., C...) that positions crisp, high-contrast labels across custom layouts (Inside vs. Outside Top-Left positions).
+* **High-Fidelity Canvas Compositing:** Assembles the high-resolution final panel independently from the UI layout, using Lanczos interpolation resampling to protect original image clarity while vector-mapping multi-axis text labels and margin captions.
+* **Lossless Resolution Export:** Supports single-click production exports into publication-grade formats (`.png`, `.jpeg`, `.tiff`) optimized for direct integration into PowerPoint presentations or manuscript documents.
+
+### 📍 Tab 5: Golgi Morphological Profiling (Sholl Analysis)
 * **Neuronal Architecture Mapping:** Specialized 2D analytical suite optimized for tracking complex cellular extensions, dendrite branching networks, and dendritic spine concentrations.
 * **Semi-Automated Sholl Calibration:** Interactive circle distance selection ($\mu m$) that automatically projects concentric bounding rings centered on the neuron's soma to calculate dendritic intersection densities at set radial distances.
 * **Synced Duplex Viewing Engine:** Features a side-by-side presentation board splitting the raw, contrast-adjusted microscope frame from the high-contrast binary overlay stencil to trace morphology in real time.
 * **Live Quantification Metrics:** Instant quantitative calculation tracking total detected spines, active spine frequencies within target ranges (e.g., $20\text{--}30\,\mu m$), and structural branch densities.
 * **Session Logging:** Single-click tabular compilation exporting complete morphological tracking history arrays straight into structured Excel/CSV sheets for downstream figure generation.
+
+### 📍 Tab 6: Open Field Test (OFT) Tracking
+* **Adaptive Motion Tracking:** Utilizes a robust background subtraction engine (MOG2) paired with morphological filtering to continuously isolate and track the subject's center of mass across complex lighting environments.
+* **Real-World Spatial Calibration:** Features an interactive 4-point perspective transform matrix (Homography) that maps raw pixel coordinates to physical arena dimensions, ensuring absolute distance accuracy regardless of camera angle distortion.
+* **Kinematic Noise Filtering:** Implements inertial smoothing and velocity deadzones to prevent false distance spikes ("teleportation" artifacts) when a user manually repositions the tracking bounding box during a trial.
+* **Live Behavioral Analytics:** Real-time quantitative computation of total trajectory distance (cm) and central zone spatial preference (time spent in center).
+* **Fluid Media Controls:** Integrated video playback system featuring global keyboard shortcut bindings (Spacebar for Play/Pause, ◄/► for precise 2-second seeking) safely decoupled from UI widget focus.
+* **Comprehensive Data Export:** Single-click production exports generating both structured quantitative metric tables (`.csv`) and high-contrast spatial trajectory maps (`.png`) for publication figures.
 
 ---
 
