@@ -370,13 +370,16 @@ class PanelCreationTab(ttk.Frame):
         title_color_rgba = self.title_color_rgb + (255,)       # Always Black
         sublabel_color_rgba = self.sublabel_color_rgb + (255,)   # Adjustable (Default White)
         
+        # --- ADD COLUMN TITLE PADDING VARIABLE ---
+        COLUMN_TITLE_PADDING = 35
+        
         # Render Column Titles (Permanently Black)
         for i, title in enumerate(col_title_strs):
             if i >= cols: break
             col_cx = left_margin + i * (target_cell_w + gap_orig) + target_cell_w // 2
             bbox = draw.textbbox((0, 0), title, font=font_titles) if hasattr(draw, 'textbbox') else (0,0,len(title)*title_font_size*0.6, title_font_size)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text((col_cx - tw // 2, top_margin - th - 15), title, fill=title_color_rgba, font=font_titles)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]            
+            draw.text((col_cx - tw // 2, top_margin - th - COLUMN_TITLE_PADDING), title, fill=title_color_rgba, font=font_titles)
             
         # Render Row Titles (Permanently Black)
         for i, title in enumerate(row_title_strs):
