@@ -1,8 +1,11 @@
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
+import math
+import csv
+import os
 
 class GolgiTab(tk.Frame):
     def __init__(self, parent):
@@ -12,6 +15,7 @@ class GolgiTab(tk.Frame):
         # State variables
         self.image_paths = []
         self.current_idx = 0
+        self.current_filename = ""
         
         # Image Pipelines
         self.raw_image = None       # 8-bit original
@@ -27,6 +31,10 @@ class GolgiTab(tk.Frame):
         self.img_ty = 0.0 # Translation Y
         self.pan_start_x = 0
         self.pan_start_y = 0
+        
+        # Data storage for export
+        self.total_spines = 0
+        self.spines_in_range = 0
         
         self.setup_ui()
         
@@ -51,9 +59,10 @@ class GolgiTab(tk.Frame):
         sholl_frame = tk.LabelFrame(control_frame, text="Sholl & Calibration", padx=10, pady=10)
         sholl_frame.pack(fill=tk.X, pady=10)
         
-        tk.Label(sholl_frame, text="Pixel Size:").grid(row=0, column=0, sticky="w")
-        self.lbl_px_size_display = tk.Label(sholl_frame, text="Waiting...", fg="blue", font=("Arial", 9, "italic"))
-        self.lbl_px_size_display.grid(row=0, column=1, pady=2, sticky="w")
+        tk.Label(sholl_frame, text="Pixel Size (µm/px):").grid(row=0, column=0, sticky="w")
+        self.entry_px_size = tk.Entry(sholl_frame, width=8)
+        self.entry_px_size.insert(0, "1.0")
+        self.entry_px_size.grid(row=0, column=1, pady=2, sticky="w")
         
         tk.Label(sholl_frame, text="Circle Dist. (µm):").grid(row=1, column=0, sticky="w")
         self.entry_circle_dist = tk.Entry(sholl_frame, width=8)
@@ -105,10 +114,10 @@ class GolgiTab(tk.Frame):
         self.lbl_range_spines = tk.Label(stats_frame, text="Spines in Range: 0", font=("Arial", 10))
         self.lbl_range_spines.pack(anchor="w", pady=2)
         
-        self.lbl_density = tk.Label(stats_frame, text="Density: 0.0", font=("Arial", 10))
+        self.lbl_density = tk.Label(stats_frame, text="Target Density: 0.0 spines/µm", font=("Arial", 10))
         self.lbl_density.pack(anchor="w", pady=2)
         
-        btn_export = tk.Button(control_frame, text="Export Session to CSV/Excel", bg="#2E7D32", fg="white", font=("Arial", 10, "bold"))
+        btn_export = tk.Button(control_frame, text="Export Session to CSV", bg="#2E7D32", fg="white", font=("Arial", 10, "bold"), command=self.export_data)
         btn_export.pack(fill=tk.X, side=tk.BOTTOM, pady=10)
 
         # ==========================================
@@ -117,12 +126,12 @@ class GolgiTab(tk.Frame):
         workspace_frame = ttk.PanedWindow(paned_window, orient=tk.HORIZONTAL)
         paned_window.add(workspace_frame, weight=1)
         
-        frame_orig = tk.LabelFrame(workspace_frame, text="Original Image (Right-Click & Drag to Pan, Scroll to Zoom)")
+        frame_orig = tk.LabelFrame(workspace_frame, text="Original Image (Click: Set Soma | R-Click+Drag: Pan | Scroll: Zoom)")
         workspace_frame.add(frame_orig, weight=1)
         self.canvas_orig = tk.Canvas(frame_orig, bg="#1e1e1e", cursor="crosshair")
         self.canvas_orig.pack(fill=tk.BOTH, expand=True)
         
-        frame_stencil = tk.LabelFrame(workspace_frame, text="High Contrast Stencil (Synced)")
+        frame_stencil = tk.LabelFrame(workspace_frame, text="Analysis Workspace (Synced)")
         workspace_frame.add(frame_stencil, weight=1)
         self.canvas_stencil = tk.Canvas(frame_stencil, bg="#1e1e1e")
         self.canvas_stencil.pack(fill=tk.BOTH, expand=True)
@@ -159,15 +168,12 @@ class GolgiTab(tk.Frame):
         self.update_previews()
 
     def do_zoom(self, event):
-        # Determine zoom direction
         if event.num == 4 or getattr(event, 'delta', 0) > 0:
             scale_factor = 1.1 # Zoom In
         else:
             scale_factor = 0.9 # Zoom Out
 
         new_scale = self.img_scale * scale_factor
-        
-        # Math to zoom specifically towards the mouse cursor
         self.img_tx = event.x - (event.x - self.img_tx) * scale_factor
         self.img_ty = event.y - (event.y - self.img_ty) * scale_factor
         self.img_scale = new_scale
@@ -175,16 +181,14 @@ class GolgiTab(tk.Frame):
         self.update_previews()
 
     def on_canvas_resize(self, event):
-        """Fires when UI loads or user resizes the window. Fits image to screen."""
         if self.raw_image is not None and self.img_scale == 1.0:
             self.fit_image_to_window()
 
     def fit_image_to_window(self):
-        """Calculates scale and offset to fit the entire image in the canvas."""
         if self.raw_image is None: return
         canvas_w = self.canvas_orig.winfo_width()
         canvas_h = self.canvas_orig.winfo_height()
-        if canvas_w < 10: return # Canvas not rendered yet
+        if canvas_w < 10: return 
         
         img_h, img_w = self.raw_image.shape[:2]
         self.img_scale = min(canvas_w / img_w, canvas_h / img_h)
@@ -194,7 +198,16 @@ class GolgiTab(tk.Frame):
 
     # --- Image Loading and Processing ---
     def load_images(self):
-        filepaths = filedialog.askopenfilenames(filetypes=[("TIFF Images", "*.tif *.tiff")])
+        # Updated to include JPG, JPEG, and PNG formats alongside TIFF
+        filepaths = filedialog.askopenfilenames(
+            filetypes=[
+                ("All Supported Images", "*.tif *.tiff *.jpg *.jpeg *.png"),
+                ("TIFF Images", "*.tif *.tiff"),
+                ("JPEG Images", "*.jpg *.jpeg"),
+                ("PNG Images", "*.png"),
+                ("All Files", "*.*")
+            ]
+        )
         if not filepaths: return
         self.image_paths = list(filepaths)
         self.current_idx = 0
@@ -202,11 +215,18 @@ class GolgiTab(tk.Frame):
         
     def load_current_image(self):
         path = self.image_paths[self.current_idx]
-        self.lbl_file_info.config(text=f"Loaded: {path.split('/')[-1]}")
+        self.current_filename = os.path.basename(path)
+        self.lbl_file_info.config(text=f"Loaded: {self.current_filename}")
         
         raw = cv2.imread(path, cv2.IMREAD_UNCHANGED)
         if raw is None: return
-        if len(raw.shape) == 3: raw = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
+        
+        # Safely handle different channel counts (Grayscale, BGR, or BGRA for PNGs)
+        if len(raw.shape) == 3:
+            if raw.shape[2] == 4: # If image has an Alpha transparency channel (PNG)
+                raw = cv2.cvtColor(raw, cv2.COLOR_BGRA2GRAY)
+            else:                 # Standard 3-channel color image (JPG)
+                raw = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
             
         if raw.dtype == np.uint16:
             self.raw_image = cv2.normalize(raw, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
@@ -218,34 +238,27 @@ class GolgiTab(tk.Frame):
         self.apply_image_math()
 
     def apply_image_math(self):
-        """Applies Contrast and Sharpness to the raw image."""
         if self.raw_image is None: return
-        
         contrast = self.scale_contrast.get()
         sharpness = self.scale_sharpness.get()
         
-        # 1. Apply Contrast
         processed = cv2.convertScaleAbs(self.raw_image, alpha=contrast, beta=0)
         
-        # 2. Apply Sharpness (Unsharp Mask)
         if sharpness > 0.0:
             blurred = cv2.GaussianBlur(processed, (0, 0), 3)
             processed = cv2.addWeighted(processed, 1.0 + sharpness, blurred, -sharpness, 0)
             
         self.processed_image = processed
-        self.process_stencil() # Instantly update the stencil based on new sharpness
+        self.process_stencil() 
 
     def process_stencil(self):
-        """Applies binary thresholding to create the high-contrast stencil."""
         if self.processed_image is None: return
         thresh_val = self.scale_thresh.get()
-        
-        # THRESH_BINARY ensures dark neurons remain dark on a white background
+        # Ensure dark dendrites/spines are mapped to 0 (Black), background to 255 (White)
         _, self.stencil_image = cv2.threshold(self.processed_image, thresh_val, 255, cv2.THRESH_BINARY)
         self.update_previews()
         
     def set_soma_center(self, event):
-        """Captures mouse click and maps canvas coordinates back to raw image coordinates."""
         if self.raw_image is None: return
         raw_x = (event.x - self.img_tx) / self.img_scale
         raw_y = (event.y - self.img_ty) / self.img_scale
@@ -254,7 +267,6 @@ class GolgiTab(tk.Frame):
 
     # --- High Performance Synchronized Rendering ---
     def get_render_crop(self, source_img, canvas):
-        """Crops and resizes only the visible portion of the image for massive performance gains."""
         canvas_w = canvas.winfo_width()
         canvas_h = canvas.winfo_height()
         
@@ -280,7 +292,6 @@ class GolgiTab(tk.Frame):
         return None, 0, 0
 
     def update_previews(self):
-        """Renders both synced canvases dynamically."""
         if self.processed_image is None or self.stencil_image is None: return
         
         # 1. Render Left Canvas (Processed Original)
@@ -291,31 +302,85 @@ class GolgiTab(tk.Frame):
             self.canvas_orig.delete("all")
             self.canvas_orig.create_image(px_o, py_o, anchor="nw", image=self.tk_img_original)
         
-        # 2. Prepare Right Canvas (Stencil + Drawings)
+        # 2. Extract Spines and Draw on Stencil
         stencil_color = cv2.cvtColor(self.stencil_image, cv2.COLOR_GRAY2BGR)
         
-        # Draw Sholl rings in RAW coordinates (crop logic handles zoom naturally)
-        if self.soma_center:
-            try:
-                dist_um = float(self.entry_circle_dist.get())
-                radius_step_px = int(dist_um / self.pixel_size_um)
-                
-                if radius_step_px > 0:
-                    max_dim = max(stencil_color.shape[0], stencil_color.shape[1])
-                    num_circles = int(max_dim / radius_step_px) + 2
-                    cx, cy = self.soma_center
+        # Safely grab current calibration metrics
+        try:
+            self.pixel_size_um = float(self.entry_px_size.get())
+            dist_um = float(self.entry_circle_dist.get())
+            r_start = float(self.entry_range_start.get())
+            r_end = float(self.entry_range_end.get())
+        except ValueError:
+            self.pixel_size_um = 1.0
+            dist_um, r_start, r_end = 10.0, 20.0, 30.0
+
+        self.total_spines = 0
+        self.spines_in_range = 0
+
+        # --- SPINE ISOLATION LOGIC ---
+        # Stencil is black cells, white background. Invert so cells are white (255) for cv2 contouring.
+        inverted = cv2.bitwise_not(self.stencil_image)
+        
+        # Morphological Opening: Remove tiny spines to isolate thick dendrite shafts
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        shafts = cv2.morphologyEx(inverted, cv2.MORPH_OPEN, kernel)
+        
+        # Subtract shafts from the inverted image. What's left over are the spines!
+        spines_only = cv2.subtract(inverted, shafts)
+        
+        # Find contours of the isolated spines
+        contours, _ = cv2.findContours(spines_only, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            # Filter by area to remove 1-pixel noise or massive blobs
+            if 2 < area < 400: 
+                M = cv2.moments(cnt)
+                if M["m00"] != 0:
+                    cx = int(M["m10"] / M["m00"])
+                    cy = int(M["m01"] / M["m00"])
                     
-                    for i in range(1, num_circles):
-                        r = i * radius_step_px
-                        cv2.circle(stencil_color, (cx, cy), r, (255, 0, 0), 2)
-                        cv2.putText(stencil_color, f"{int(i * dist_um)}um", (cx + r + 2, cy), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
+                    self.total_spines += 1
+                    in_target_range = False
+                    
+                    if self.soma_center:
+                        sx, sy = self.soma_center
+                        dist_px = math.hypot(cx - sx, cy - sy)
+                        distance_from_soma_um = dist_px * self.pixel_size_um
                         
-                    cv2.circle(stencil_color, (cx, cy), 8, (0, 0, 255), -1)
-            except ValueError:
-                pass 
+                        if r_start <= distance_from_soma_um <= r_end:
+                            self.spines_in_range += 1
+                            in_target_range = True
+                            
+                    # Draw spines on the stencil canvas BEFORE cropping (Green = in range, Yellow = out of range)
+                    color = (0, 255, 0) if in_target_range else (0, 255, 255)
+                    cv2.circle(stencil_color, (cx, cy), max(2, int(2 / self.img_scale)), color, -1)
+
+        # Draw Sholl rings
+        if self.soma_center:
+            radius_step_px = int(dist_um / self.pixel_size_um)
+            if radius_step_px > 0:
+                max_dim = max(stencil_color.shape[0], stencil_color.shape[1])
+                num_circles = int(max_dim / radius_step_px) + 2
+                cx, cy = self.soma_center
                 
-        # Crop/Zoom the stencil to exactly match the original
+                for i in range(1, num_circles):
+                    r = i * radius_step_px
+                    cv2.circle(stencil_color, (cx, cy), r, (255, 0, 0), max(1, int(1 / self.img_scale)))
+                    cv2.putText(stencil_color, f"{int(i * dist_um)}um", (cx + r + 2, cy), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
+                
+                # Highlight Target Range Ring bounds
+                r_start_px = int(r_start / self.pixel_size_um)
+                r_end_px = int(r_end / self.pixel_size_um)
+                cv2.circle(stencil_color, (cx, cy), r_start_px, (0, 255, 0), max(2, int(2/self.img_scale)))
+                cv2.circle(stencil_color, (cx, cy), r_end_px, (0, 255, 0), max(2, int(2/self.img_scale)))
+                
+                # Draw Soma center dot
+                cv2.circle(stencil_color, (cx, cy), 8, (0, 0, 255), -1)
+
+        # 3. Render Right Canvas (Prepared Stencil)
         res_stencil, px_s, py_s = self.get_render_crop(stencil_color, self.canvas_stencil)
         if res_stencil is not None:
             img_s_pil = Image.fromarray(cv2.cvtColor(res_stencil, cv2.COLOR_BGR2RGB))
@@ -323,6 +388,60 @@ class GolgiTab(tk.Frame):
             self.canvas_stencil.delete("all")
             self.canvas_stencil.create_image(px_s, py_s, anchor="nw", image=self.tk_img_stencil)
             
-        # Update labels dynamically
-        r_start, r_end = self.entry_range_start.get(), self.entry_range_end.get()
-        self.lbl_range_spines.config(text=f"Spines in Range ({r_start}-{r_end}µm): 0")
+        # Update text labels
+        self.lbl_total_spines.config(text=f"Total Spines Detected: {self.total_spines}")
+        self.lbl_range_spines.config(text=f"Spines in Target Range ({r_start}-{r_end}µm): {self.spines_in_range}")
+        
+        # Calculate a proxy density (Spines per radial range width)
+        range_width = max(1.0, r_end - r_start)
+        density = self.spines_in_range / range_width
+        self.lbl_density.config(text=f"Density Proxy: {density:.2f} spines/radial-µm")
+
+    def export_data(self):
+        """Exports the current analysis state to a CSV file."""
+        if not self.current_filename:
+            messagebox.showwarning("Export Error", "No image loaded to export.")
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+            title="Save Spine Analysis Data"
+        )
+        
+        if not file_path: return
+        
+        with open(file_path, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(["Filename", "Pixel Size (um)", "Total Spines", 
+                             "Sholl Start Range (um)", "Sholl End Range (um)", 
+                             "Spines In Range", "Density Proxy (spines/radial-um)"])
+            
+            try:
+                r_start = float(self.entry_range_start.get())
+                r_end = float(self.entry_range_end.get())
+                range_width = max(1.0, r_end - r_start)
+                density = self.spines_in_range / range_width
+            except ValueError:
+                r_start, r_end, density = 0.0, 0.0, 0.0
+                
+            writer.writerow([
+                self.current_filename, 
+                self.pixel_size_um, 
+                self.total_spines, 
+                r_start, 
+                r_end, 
+                self.spines_in_range, 
+                round(density, 3)
+            ])
+            
+        messagebox.showinfo("Export Successful", f"Data saved successfully to\n{file_path}")
+
+# To run it standalone:
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.title("Golgi Spine Analysis Tool")
+    root.geometry("1400x800")
+    app = GolgiTab(root)
+    app.pack(fill=tk.BOTH, expand=True)
+    root.mainloop()
