@@ -433,7 +433,7 @@ class MaskMergerTab(ttk.Frame):
             ex, ey = self.image_to_canvas(*self.temp_draw_data["end"])
             color = '#%02x%02x%02x' % self.active_text_color_rgb
             if self.interaction_state == "Draw_Box":
-                self.canvas.create_rectangle(sx, sy, ex, ey, outline=color, width=3, dash=(12, 8))
+                self.canvas.create_rectangle(sx, sy, ex, ey, outline=color, width=6, dash=(12, 8))
             elif self.interaction_state == "Draw_Arrow":
                 self.canvas.create_line(sx, sy, ex, ey, fill=color, width=4, arrow=tk.LAST, arrowshape=(24, 30, 12))
 
@@ -448,7 +448,7 @@ class MaskMergerTab(ttk.Frame):
             bw, bh = (anno["w"] * scale) / 2, (anno["h"] * scale) / 2
             pts = [self.rotate_point(cx+px, cy+py, cx, cy, anno["angle"]) for px, py in [(-bw,-bh), (bw,-bh), (bw,bh), (-bw,bh)]]
             for i in range(4):
-                self.canvas.create_line(pts[i][0], pts[i][1], pts[(i+1)%4][0], pts[(i+1)%4][1], fill=tk_color, width=3, dash=(12, 8))
+                self.canvas.create_line(pts[i][0], pts[i][1], pts[(i+1)%4][0], pts[(i+1)%4][1], fill=tk_color, width=6, dash=(12, 8))
                 
         elif anno["type"] == "Arrow":
             al = (anno["length"] * scale) / 2
@@ -594,7 +594,7 @@ class MaskMergerTab(ttk.Frame):
                         curr_dist += dash_len
                         end_x = pts[i][0] + min(dist, curr_dist) * step_x
                         end_y = pts[i][1] + min(dist, curr_dist) * step_y
-                        draw.line([(start_x, start_y), (end_x, end_y)], fill=rgba, width=3)
+                        draw.line([(start_x, start_y), (end_x, end_y)], fill=rgba, width=6)
                         curr_dist += gap_len
                         
             elif a["type"] == "Arrow":
