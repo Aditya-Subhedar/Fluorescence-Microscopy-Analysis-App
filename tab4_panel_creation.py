@@ -10,9 +10,10 @@ class PanelCreationTab(ttk.Frame):
         self.main_app = main_app
         
         # State Data
-        self.cell_images = {}  # key: (row, col), value: absolute filepath
+        self.cell_images = {}      # key: (row, col), value: absolute filepath
+        self.cell_rotations = {}   # key: (row, col), value: degrees (0, 90, 180, 270)
         self.grid_dims = (2, 2)
-        self.cell_aspect_ratio = 1.0  # Width/Height (1.0 = Square)
+        self.cell_aspect_ratio = 1.0  # Width/Height (Calculated dynamically if Original Ratio)
         
         # Previews
         self.composite_pil = None  # Master high-res image
@@ -23,8 +24,8 @@ class PanelCreationTab(ttk.Frame):
         self.sublabel_color_rgb = (255, 255, 255)  # Labels inside image default to White
         self.title_color_rgb = (0, 0, 0)          # Row/Col titles always Black
         
-        # Undo/Redo (for image selections)
-        self.undo_stack = [[]]
+        # Undo/Redo (for image selections and rotations)
+        self.undo_stack = [{'images': {}, 'rotations': {}}]
         self.redo_stack = []
 
         self.setup_ui()
@@ -58,9 +59,9 @@ class PanelCreationTab(ttk.Frame):
         self.spin_cols.delete(0, tk.END); self.spin_cols.insert(0, "2")
         
         tk.Label(grid_frame, text="Image Orientation:").pack(anchor=tk.W, pady=(5, 0))
-        self.combo_aspect = ttk.Combobox(grid_frame, values=["Square (1:1)", "Landscape (4:3)", "Portrait (3:4)"], state="readonly")
+        self.combo_aspect = ttk.Combobox(grid_frame, values=["Original Ratio", "Square (1:1)", "Landscape (4:3)", "Portrait (3:4)"], state="readonly")
         self.combo_aspect.pack(fill=tk.X, pady=2)
-        self.combo_aspect.set("Square (1:1)")
+        self.combo_aspect.set("Original Ratio")
         
         gap_frame = tk.Frame(grid_frame)
         gap_frame.pack(fill=tk.X, pady=(5, 2))
@@ -83,6 +84,11 @@ class PanelCreationTab(ttk.Frame):
         tk.Label(titles_frame, text="Row Titles (Left - comma sep):").pack(anchor=tk.W)
         self.entry_row_titles = tk.Entry(titles_frame)
         self.entry_row_titles.pack(fill=tk.X, pady=2)
+
+        tk.Label(titles_frame, text="Row Title Orientation:").pack(anchor=tk.W)
+        self.combo_row_orient = ttk.Combobox(titles_frame, values=["Horizontal", "Sideways (90° CCW)"], state="readonly")
+        self.combo_row_orient.pack(fill=tk.X, pady=2)
+        self.combo_row_orient.set("Sideways (90° CCW)")
         
         labels_config_frame = tk.Frame(titles_frame)
         labels_config_frame.pack(fill=tk.X, pady=(5, 0))
@@ -158,7 +164,10 @@ class PanelCreationTab(ttk.Frame):
         toplevel.bind("<Control-g>", self.action_generate_grid)
 
     def save_selection_state(self):
-        state = copy.deepcopy(self.cell_images)
+        state = {
+            'images': copy.deepcopy(self.cell_images),
+            'rotations': copy.deepcopy(self.cell_rotations)
+        }
         self.undo_stack.append(state)
         self.redo_stack.clear()
         if len(self.undo_stack) > 50: self.undo_stack.pop(0)
@@ -166,17 +175,26 @@ class PanelCreationTab(ttk.Frame):
     def undo(self, event=None):
         if len(self.undo_stack) > 1:
             self.redo_stack.append(self.undo_stack.pop())
-            self.cell_images = copy.deepcopy(self.undo_stack[-1])
+            top_state = self.undo_stack[-1]
+            self.cell_images = copy.deepcopy(top_state['images'])
+            self.cell_rotations = copy.deepcopy(top_state['rotations'])
+            self.cell_aspect_ratio = self.get_cell_aspect()
             self.generate_canvas_placeholders()
+            if self.composite_pil is not None:
+                self.action_build_composite()
         else:
             messagebox.showinfo("Info", "Nothing to undo in selections.")
 
     def redo(self, event=None):
         if self.redo_stack:
             state = self.redo_stack.pop()
-            self.cell_images = copy.deepcopy(state)
+            self.cell_images = copy.deepcopy(state['images'])
+            self.cell_rotations = copy.deepcopy(state['rotations'])
             self.undo_stack.append(state)
+            self.cell_aspect_ratio = self.get_cell_aspect()
             self.generate_canvas_placeholders()
+            if self.composite_pil is not None:
+                self.action_build_composite()
         else:
             messagebox.showinfo("Info", "Nothing to redo in selections.")
 
@@ -185,16 +203,38 @@ class PanelCreationTab(ttk.Frame):
         if "Square" in choice: return 1.0
         if "Landscape" in choice: return 4.0 / 3.0
         if "Portrait" in choice: return 3.0 / 4.0
+        if "Original" in choice:
+            # Dynamically determine from first loaded image, factoring in manual rotation alignment
+            for (r, c), path in self.cell_images.items():
+                if path and os.path.exists(path):
+                    try:
+                        with Image.open(path) as img:
+                            rot = self.cell_rotations.get((r, c), 0)
+                            if rot in [90, 270]:
+                                return img.size[1] / img.size[0]
+                            return img.size[0] / img.size[1]
+                    except:
+                        pass
+            return 1.0
         return 1.0
 
     def pick_sublabel_color(self):
-        """Allows modifying color fields exclusively for internal panel markings."""
         color_choice = colorchooser.askcolor(initialcolor="#ffffff", title="Select Subpanel Label Color")
         if color_choice and color_choice[0] is not None:
             self.sublabel_color_rgb = tuple(int(c) for c in color_choice[0])
             hex_color = color_choice[1]
             btn_fg = "black" if (sum(self.sublabel_color_rgb)/3) > 128 else "white"
             self.btn_font_color.config(text=f"Label: {hex_color}", bg=hex_color, fg=btn_fg)
+
+    def rotate_cell(self, row, col, angle):
+        if (row, col) in self.cell_images:
+            self.save_selection_state()
+            curr_rot = self.cell_rotations.get((row, col), 0)
+            self.cell_rotations[(row, col)] = (curr_rot + angle) % 360
+            self.cell_aspect_ratio = self.get_cell_aspect()
+            self.generate_canvas_placeholders()
+            if self.composite_pil is not None:
+                self.action_build_composite()
 
     def action_generate_grid(self, event=None):
         try:
@@ -209,6 +249,7 @@ class PanelCreationTab(ttk.Frame):
             if list(self.cell_images.keys()) and (r != len(set(k[0] for k in self.cell_images.keys())) or c != len(set(k[1] for k in self.cell_images.keys()))):
                 if messagebox.askyesno("Clear Images?", "Grid dimensions changed. Clear currently selected images?"):
                     self.cell_images.clear()
+                    self.cell_rotations.clear()
             
             self.generate_canvas_placeholders()
         except ValueError:
@@ -227,7 +268,7 @@ class PanelCreationTab(ttk.Frame):
         if gap < 2: gap = 5
         
         top_margin = 50
-        left_margin = 60
+        left_margin = 70
         
         avail_w = cw - (2 * gap) - left_margin
         avail_h = ch - (2 * gap) - top_margin
@@ -270,11 +311,21 @@ class PanelCreationTab(ttk.Frame):
         
         self.save_selection_state()
         self.cell_images[(row, col)] = path
+        if (row, col) not in self.cell_rotations:
+            self.cell_rotations[(row, col)] = 0
+            
+        self.cell_aspect_ratio = self.get_cell_aspect()
         self.generate_canvas_placeholders()
 
     def draw_cell_thumbnail(self, r, c, x1, y1, x2, y2, path):
         try:
             pil_img = Image.open(path)
+            
+            # Apply real-time hardware transformation step
+            rot = self.cell_rotations.get((r, c), 0)
+            if rot != 0:
+                pil_img = pil_img.rotate(rot, expand=True)
+
             target_w = max(1, int(self.canvas_cell_w))
             target_h = max(1, int(self.canvas_cell_h))
             
@@ -290,8 +341,15 @@ class PanelCreationTab(ttk.Frame):
                 hex_lbl = f"#{self.sublabel_color_rgb[0]:02x}{self.sublabel_color_rgb[1]:02x}{self.sublabel_color_rgb[2]:02x}"
                 self.canvas.create_text(x1 + 8, y1 + 8, text=f"{label_char}.", fill=hex_lbl, anchor=tk.NW, font=("Arial", 11, "bold"))
             
+            # Action Links Layered Directly onto the Image Overlay Box Geometry
             text_id = self.canvas.create_text(x2-6, y2-6, text="Change...", fill="#00e676", anchor=tk.SE, font=("Arial", 8, "bold"))
             self.canvas.tag_bind(text_id, "<Button-1>", lambda e, row=r, col=c: self.select_image_for_cell(row, col))
+            
+            rot_ccw_id = self.canvas.create_text(x1+6, y2-6, text="⟲ CCW", fill="#ff9100", anchor=tk.SW, font=("Arial", 8, "bold"))
+            self.canvas.tag_bind(rot_ccw_id, "<Button-1>", lambda e, row=r, col=c: self.rotate_cell(row, col, -90))
+
+            rot_cw_id = self.canvas.create_text(x1+55, y2-6, text="CW ⟳", fill="#ff9100", anchor=tk.SW, font=("Arial", 8, "bold"))
+            self.canvas.tag_bind(rot_cw_id, "<Button-1>", lambda e, row=r, col=c: self.rotate_cell(row, col, 90))
             
         except Exception as e:
             messagebox.showerror("Load Error", f"Failed to load image:\n{str(e)}")
@@ -308,7 +366,7 @@ class PanelCreationTab(ttk.Frame):
         try:
             ref_path = next(iter(self.cell_images.values()))
             with Image.open(ref_path) as img:
-                ref_cell_w, _ = img.size
+                ref_cell_w = img.size[0]
         except:
             ref_cell_w = 1200
 
@@ -340,7 +398,10 @@ class PanelCreationTab(ttk.Frame):
         for title in row_title_strs:
             bbox = dummy_draw.textbbox((0, 0), title, font=font_titles) if hasattr(dummy_draw, 'textbbox') else (0,0,len(title)*title_font_size*0.6, title_font_size)
             tw = bbox[2] - bbox[0]
-            if tw > max_row_text_w: max_row_text_w = tw
+            th = bbox[3] - bbox[1]
+            # If vertical orientation is requested, width profile swapped into its standard height
+            current_w = th if self.combo_row_orient.get() == "Sideways (90° CCW)" else tw
+            if current_w > max_row_text_w: max_row_text_w = current_w
             
         max_col_text_h = 0
         for title in col_title_strs:
@@ -366,14 +427,12 @@ class PanelCreationTab(ttk.Frame):
         self.composite_pil = Image.new("RGBA", (int(total_w), int(total_h)), (255, 255, 255, 255))
         draw = ImageDraw.Draw(self.composite_pil)
         
-        # Color mapping splits
-        title_color_rgba = self.title_color_rgb + (255,)       # Always Black
-        sublabel_color_rgba = self.sublabel_color_rgb + (255,)   # Adjustable (Default White)
+        title_color_rgba = self.title_color_rgb + (255,)
+        sublabel_color_rgba = self.sublabel_color_rgb + (255,)
         
-        # --- ADD COLUMN TITLE PADDING VARIABLE ---
         COLUMN_TITLE_PADDING = 35
         
-        # Render Column Titles (Permanently Black)
+        # Render Column Titles
         for i, title in enumerate(col_title_strs):
             if i >= cols: break
             col_cx = left_margin + i * (target_cell_w + gap_orig) + target_cell_w // 2
@@ -381,13 +440,29 @@ class PanelCreationTab(ttk.Frame):
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]            
             draw.text((col_cx - tw // 2, top_margin - th - COLUMN_TITLE_PADDING), title, fill=title_color_rgba, font=font_titles)
             
-        # Render Row Titles (Permanently Black)
+        # Render Row Titles
         for i, title in enumerate(row_title_strs):
             if i >= rows: break
             row_cy = top_margin + i * (target_cell_h + gap_orig) + target_cell_h // 2
             bbox = draw.textbbox((0, 0), title, font=font_titles) if hasattr(draw, 'textbbox') else (0,0,len(title)*title_font_size*0.6, title_font_size)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text((left_margin - tw - 20, row_cy - th // 2), title, fill=title_color_rgba, font=font_titles)
+            
+            if self.combo_row_orient.get() == "Sideways (90° CCW)":
+                # Create vertical presentation using clean text layer rotation
+                txt_w = max(1, int(tw + 4))
+                txt_h = max(1, int(th + 4))
+                text_layer = Image.new("RGBA", (txt_w, txt_h), (0, 0, 0, 0))
+                layer_draw = ImageDraw.Draw(text_layer)
+                layer_draw.text((-bbox[0], -bbox[1]), title, fill=title_color_rgba, font=font_titles)
+                
+                rotated_txt = text_layer.rotate(90, expand=True)
+                rt_w, rt_h = rotated_txt.size
+                
+                px = left_margin - rt_w - 20
+                py = row_cy - rt_h // 2
+                self.composite_pil.alpha_composite(rotated_txt, (int(px), int(py)))
+            else:
+                draw.text((left_margin - tw - 20, row_cy - th // 2), title, fill=title_color_rgba, font=font_titles)
 
         # Compositing High-Res Grid
         for r in range(rows):
@@ -399,6 +474,9 @@ class PanelCreationTab(ttk.Frame):
                 if path:
                     try:
                         with Image.open(path) as img:
+                            rot = self.cell_rotations.get((r, c), 0)
+                            if rot != 0:
+                                img = img.rotate(rot, expand=True)
                             scaled_img = img.convert("RGBA").resize((int(target_cell_w), int(target_cell_h)), Image.Resampling.LANCZOS)
                             self.composite_pil.alpha_composite(scaled_img, (int(px), int(py)))
                     except Exception as e:
@@ -406,7 +484,6 @@ class PanelCreationTab(ttk.Frame):
                 else:
                     draw.rectangle([px, py, px+target_cell_w, py+target_cell_h], fill=(240, 240, 240, 255), outline=(200, 200, 200, 255), width=2)
                 
-                # Apply Internal Labels (Adjustable Color - Default White)
                 label_char = chr(65 + r * cols + c)
                 label_str = f"{label_char}."
                 
@@ -414,7 +491,6 @@ class PanelCreationTab(ttk.Frame):
                     offset = sublabel_font_size // 2
                     draw.text((px + offset, py + offset), label_str, fill=sublabel_color_rgba, font=font_sublabels)
                 elif "Outside" in labels_mode:
-                    # Outside prints on the margin gap, adjust fill context if needed
                     draw.text((px - int(sublabel_font_size * 0.9), py), label_str, fill=sublabel_color_rgba, font=font_sublabels)
         
         self.render_canvas_preview()
