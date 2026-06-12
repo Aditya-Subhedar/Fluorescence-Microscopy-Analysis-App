@@ -9,7 +9,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 ### Tab 1: CZI & Z-Stack Preprocessing
 * **Robust File Support:** Robustly loads complex Zeiss CZI and multi-stack TIF files.
 * **Intelligent Dimension Correction:** Automatically resolves Z-slice/Color-Channel misalignment traps and unstitched mosaic issues inherent in raw python microscopy readers.
-* **Image Management:** Features a multi-image navigation bar supporting `askopenfilenames` (batch select) with keyboard arrow shortcut support (◀/▶) for streamlined workflow.
+* **Image Management:** Features a multi-image navigation bar supporting `askopenfilenames` (batch select) with keyboard arrow shortcut support (◄/►) for streamlined workflow.
 * **Fluid Viewport Control:** Lag-free interactive canvas supporting precise scroll-wheel zooming and smooth click-and-drag panning.
 * **Fidelity Optimization:** Adaptive hybrid rendering engine that automatically switches processing workloads to match the viewport size, delivering crystal-clear full-resolution details during deep zoom passes without lagging.
 
@@ -30,7 +30,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 
 ### 📍 Tab 4: Multi-Image Publication Panel Creator
 * **Interactive Matrix Generation:** Generates a clean, structural layout matrix based on custom row and column configurations with an explicit image allocation wizard built into every cell.
-* **Geometric Aspect Ratio Presets:** Configures cell bounds using standard scientific presentation formats (Square 1:1, Landscape 4:3, Portrait 3:4) with adjustable inter-image pixel gaps.
+* **Geometric Aspect Ratio Presets:** Configures cell bounds using standard scientific presentation formats (Square 1:1, Landscape, Portrait) with adjustable inter-image pixel gaps.
 * **On-Canvas Image Previews:** Loads raw image assets directly into targeted grid placeholders, instantly rendering downscaled thumbnails alongside automated aspect ratio mismatch safety warnings.
 * **Automated Subpanel Indexing:** Includes a sequential lettering engine (e.g., A., B., C...) that positions crisp, high-contrast labels across custom layouts (Inside vs. Outside Top-Left positions).
 * **High-Fidelity Canvas Compositing:** Assembles the high-resolution final panel independently from the UI layout, using Lanczos interpolation resampling to protect original image clarity while vector-mapping multi-axis text labels and margin captions.
