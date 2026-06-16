@@ -51,6 +51,8 @@ class QuantificationTab(ttk.Frame):
         self.handle_ids = []           # Canvas item IDs for active bounding box adjusters
         self.active_handle = None      # Tracks which handle is currently dragged ("T", "B", "L", "R")
 
+        self.mask_override_mode = False
+        self.override_mask_data = None
 
         # --- PRESET STATE VARIABLES ---
         self.presets_file = "cytoquant_presets.json"
@@ -70,53 +72,75 @@ class QuantificationTab(ttk.Frame):
 
     def setup_ui(self):
         root_frame = tk.Frame(self)
-        root_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        root_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5) # Reduced padding to maximize space
         
         # --- Control Bar ---
-        control_frame = tk.Frame(root_frame, pady=10)
+        control_frame = tk.Frame(root_frame, pady=5)
         control_frame.pack(fill=tk.X)
         
-        self.btn_select_images = tk.Button(control_frame, text="1. Select Images...", command=self.load_files, font=("Arial", 10, "bold"))
-        self.btn_select_images.pack(side=tk.LEFT, padx=10)
+        # 1. Base Operations
+        self.btn_select_images = tk.Button(control_frame, text="1. Select Images", command=self.load_files, font=("Arial", 9, "bold"))
+        self.btn_select_images.pack(side=tk.LEFT, padx=3)
         
-        self.btn_auto = tk.Button(control_frame, text="Auto Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 10, "bold"))
-        self.btn_auto.pack(side=tk.LEFT, padx=(10, 10))
+        self.btn_auto = tk.Button(control_frame, text="Auto Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 9, "bold"))
+        self.btn_auto.pack(side=tk.LEFT, padx=5)
         
-        tool_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=5, pady=2)
-        tool_frame.pack(side=tk.LEFT, padx=10)
-        tk.Label(tool_frame, text="Tools:", font=("Arial", 8)).pack(side=tk.LEFT)
+        # 2. Drawing Tools Frame
+        tool_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
+        tool_frame.pack(side=tk.LEFT, padx=4)
+        tk.Label(tool_frame, text="Tools:", font=("Arial", 8)).pack(side=tk.LEFT, padx=1)
         
         self.btn_pencil = tk.Button(tool_frame, text="✏️", relief=tk.RAISED, command=lambda: self.set_draw_mode("pencil"))
         self.btn_pencil.pack(side=tk.LEFT, padx=1)
 
-        self.btn_circle = tk.Button(tool_frame, text="⭕", width=3, command=lambda: self.set_draw_mode("circle"), font=("Arial", 10, "bold"))
+        self.btn_circle = tk.Button(tool_frame, text="⭕", width=2, command=lambda: self.set_draw_mode("circle"), font=("Arial", 9, "bold"))
         self.btn_circle.pack(side=tk.LEFT, padx=1)
         
         self.btn_eraser = tk.Button(tool_frame, text="🧹", relief=tk.RAISED, command=lambda: self.set_draw_mode("eraser"))
-        self.btn_eraser.pack(side=tk.LEFT, padx=2)
+        self.btn_eraser.pack(side=tk.LEFT, padx=1)
 
-        self.btn_undo = tk.Button(tool_frame, text="↩️ Undo", command=self.undo_action)
-        self.btn_undo.pack(side=tk.LEFT, padx=2)
+        self.btn_undo = tk.Button(tool_frame, text="↩️", command=self.undo_action, font=("Arial", 9)) # Compact icon only
+        self.btn_undo.pack(side=tk.LEFT, padx=1)
 
-        self.btn_redo = tk.Button(tool_frame, text="↪️ Redo", command=self.redo_action)
-        self.btn_redo.pack(side=tk.LEFT, padx=2)
+        self.btn_redo = tk.Button(tool_frame, text="↪️", command=self.redo_action, font=("Arial", 9)) # Compact icon only
+        self.btn_redo.pack(side=tk.LEFT, padx=1)
         
-        tk.Button(control_frame, text="Clear Drawings", command=self.clear_drawing, fg="red").pack(side=tk.LEFT, padx=10)
+        tk.Button(tool_frame, text="Clear All", command=self.clear_drawing, fg="red", font=("Arial", 9)).pack(side=tk.LEFT, padx=3)
         
-        # --- PRESET BUTTONS ---
-        self.btn_apply_preset = tk.Button(control_frame, text="Apply Preset", command=self.show_preset_dropdown)
-        self.btn_apply_preset.pack(side=tk.LEFT, padx=2)
+        # 3. Parameters/Presets Frame (Shortened text labels to preserve space)
+        preset_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
+        preset_frame.pack(side=tk.LEFT, padx=4)
+        tk.Label(preset_frame, text="Preset:", font=("Arial", 8)).pack(side=tk.LEFT, padx=1)
         
-        tk.Button(control_frame, text="Save As Preset", command=self.save_as_preset).pack(side=tk.LEFT, padx=2)
-        # ----------------------
+        tk.Button(preset_frame, text="Save Parameters", command=self.save_as_preset, font=("Arial", 9)).pack(side=tk.LEFT, padx=1)
 
-        # --- NEW: MASK IMPORT / EXPORT BUTTONS ---
-        tk.Button(control_frame, text="💾 Save Mask", command=self.save_mask_as_png, bg="#1976d2", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=5)
-        # ------------------------------------------
+        self.btn_apply_preset = tk.Button(preset_frame, text="Apply Preset", command=self.show_preset_dropdown, font=("Arial", 9))
+        self.btn_apply_preset.pack(side=tk.LEFT, padx=1)
 
-        # --- Saveing data button ---
-        tk.Button(control_frame, text="Save Data to Excel/CSV", command=self.export_excel, font=("Arial", 10, "bold"), fg="white", bg="#2e7d32").pack(side=tk.RIGHT, padx=10)
+        # 4. Mask Import / Export Frame
+        mask_io_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
+        mask_io_frame.pack(side=tk.LEFT, padx=4)
+        
+        tk.Button(mask_io_frame, text="💾 Save Mask", command=self.save_mask_as_png, 
+                  bg="#1976d2", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=1)
+        
+        self.btn_apply_mask = tk.Button(
+            mask_io_frame, text="📥 Apply Mask", command=self.apply_saved_mask, 
+            bg="#ef6c00", fg="white", font=("Arial", 9, "bold")
+        )
+        self.btn_apply_mask.pack(side=tk.LEFT, padx=1)
 
+        # 5. ---> NEW: DATA & IMAGE EXPORTS FRAME GROUPED ON LEFT <---
+        export_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
+        export_frame.pack(side=tk.LEFT, padx=4)
+        
+        # Export Image Button
+        tk.Button(export_frame, text="🖼️ Export Image", command=self.export_current_image_view, 
+                  font=("Arial", 9, "bold"), fg="white", bg="#0288d1").pack(side=tk.LEFT, padx=1)
+        
+        # Export Data Button
+        tk.Button(export_frame, text="📊 Export Data", command=self.export_excel, 
+                  font=("Arial", 9, "bold"), fg="white", bg="#2e7d32").pack(side=tk.LEFT, padx=1)
 
         # --- SLIDER FRAME ---
         slider_frame = tk.Frame(root_frame, pady=10)
@@ -126,28 +150,28 @@ class QuantificationTab(ttk.Frame):
         hue_frame = tk.Frame(slider_frame)
         hue_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
         tk.Label(hue_frame, text="Color Filter (Hue):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
-        self.hue_slider = ColorRangeSlider(hue_frame, width=220, height=35, slider_type="hue", abs_min=0, abs_max=179, command=self.schedule_update) 
+        self.hue_slider = ColorRangeSlider(hue_frame, width=220, height=25, slider_type="hue", abs_min=0, abs_max=179, command=self.schedule_update) 
         self.hue_slider.pack(fill=tk.X, pady=5)
 
         # 2. Intensity Range 
         int_frame = tk.Frame(slider_frame)
         int_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
         tk.Label(int_frame, text="Intensity (0=Black, 255=White):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
-        self.int_slider = ColorRangeSlider(int_frame, width=220, height=35, slider_type="intensity", abs_min=0, abs_max=255, command=self.schedule_update)
+        self.int_slider = ColorRangeSlider(int_frame, width=220, height=25, slider_type="intensity", abs_min=0, abs_max=255, command=self.schedule_update)
         self.int_slider.pack(fill=tk.X, pady=5)
 
         # 3. Area Range
         area_frame = tk.Frame(slider_frame)
         area_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
         tk.Label(area_frame, text="Area Filter (px):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
-        self.area_slider = ColorRangeSlider(area_frame, width=220, height=35, slider_type="area", abs_min=0, abs_max=1000, command=self.schedule_update)
+        self.area_slider = ColorRangeSlider(area_frame, width=220, height=25, slider_type="area", abs_min=0, abs_max=1000, command=self.schedule_update)
         self.area_slider.pack(fill=tk.X, pady=5)
         
         # 4. Circularity / Split (Updated to Single Slider)
         circ_frame = tk.Frame(slider_frame)
         circ_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
         tk.Label(circ_frame, text="Circularity (0=Line, 100=Circle):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
-        self.circ_slider = SingleSlider(circ_frame, width=220, height=35, abs_min=0, abs_max=100, command=self.schedule_update)
+        self.circ_slider = SingleSlider(circ_frame, width=220, height=25, abs_min=0, abs_max=100, command=self.schedule_update)
         self.circ_slider.pack(fill=tk.X, pady=5)
 
         # Canvas
@@ -195,10 +219,6 @@ class QuantificationTab(ttk.Frame):
         self.lbl_stats_integrated = tk.Label(stats_frame, text="", font=("Arial", 11, "bold"))
         self.lbl_stats_integrated.pack()
         
-        # ---> NEW: Image Index Tracker Layout Element for clean navigation <---
-        self.lbl_img_count = tk.Label(stats_frame, text="0 / 0", font=("Arial", 10, "italic"), fg="gray")
-        self.lbl_img_count.pack()
-
         # FIXED: Saved explicitly to instance variable self.btn_next_img
         self.btn_next_img = tk.Button(nav_frame, text="Next >>", command=self.next_image, font=("Arial", 10))
         self.btn_next_img.pack(side=tk.RIGHT)
@@ -584,12 +604,18 @@ class QuantificationTab(ttk.Frame):
 
     # --- Auto Detect for Segmentation of Fluorosent Regions ---
     def toggle_auto_detect(self):
-        if not self.image_states or self.original_image_rgb is None: return
+        # Clear the override mode if they turn auto detect back on
+        self.mask_override_mode = False
+        self.override_mask_data = None
+        
+        # Toggle your baseline auto detect tracking boolean
         self.auto_detect_enabled = not self.auto_detect_enabled
+        
         if self.auto_detect_enabled:
-            self.btn_auto.config(text="Auto Detect: ON", fg="green")
+            self.btn_auto.config(text="Auto Detect: ON", fg="white")
         else:
             self.btn_auto.config(text="Auto Detect: OFF", fg="red")
+            
         self.process_image()
 
     # --- Slider Adjustments and Preview Updates ---
@@ -632,156 +658,181 @@ class QuantificationTab(ttk.Frame):
         self.process_image()
 
     def process_image(self):
-        if self.cached_hsv is None or not self.image_states: return
-        self.is_processing = True
-        
-        state = self.image_states[self.current_index]
-        file_meta = f"Image {self.current_index + 1} of {len(self.image_states)} | {state['file_path']}"
-        
-        overlay_rgb = self.original_image_rgb.copy()
-        total_pixels = self.cached_gray.shape[0] * self.cached_gray.shape[1]
-        
-        slider_min = state.get('area_min_pos', 0)
-        slider_max = state.get('area_max_pos', 1000)
-        
-        min_area_val = int(((slider_min / 1000.0) ** 4) * total_pixels) 
-        max_area_val = int(((slider_max / 1000.0) ** 4) * total_pixels)
-        
-        state['min_area_actual'] = min_area_val
-        state['max_area_actual'] = max_area_val
-        
-        if self.auto_detect_enabled:
-            h_min, h_max = state.get('hue_min', 0), state.get('hue_max', 179)
-            v_min = state.get('int_min', 0)
-            v_max = state.get('int_max', 255)
+            if self.cached_hsv is None or not self.image_states: return
+            self.is_processing = True
             
-            lower_bound = np.array([h_min, 30, v_min]) 
-            upper_bound = np.array([h_max, 255, v_max])
-            mask_filtered = cv2.inRange(self.cached_hsv, lower_bound, upper_bound)
+            state = self.image_states[self.current_index]
+            file_meta = f"Image {self.current_index + 1} of {len(self.image_states)} | {state['file_path']}"
             
-            # 1. Base noise cleanup
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            mask_clean = cv2.morphologyEx(mask_filtered, cv2.MORPH_OPEN, kernel)
-            mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
+            overlay_rgb = self.original_image_rgb.copy()
+            total_pixels = self.cached_gray.shape[0] * self.cached_gray.shape[1]
             
-            # ---> 2. DYNAMIC FIBER STRIPPING (MORPHOLOGICAL OPENING) <---
-            circ_min = state.get('circ_min', 0)
-            if circ_min > 0:
-                k_size = int((circ_min / 100.0) * 20) * 2 + 1 
-                if k_size > 1:
-                    dynamic_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
-                    mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_OPEN, dynamic_kernel)
+            slider_min = state.get('area_min_pos', 0)
+            slider_max = state.get('area_max_pos', 1000)
             
-            mask_final_uint8 = np.uint8(mask_clean)
+            min_area_val = int(((slider_min / 1000.0) ** 4) * total_pixels) 
+            max_area_val = int(((slider_max / 1000.0) ** 4) * total_pixels)
             
-            # ---> NEW: Initialise a permanent eraser tracking mask matching the image dimensions <---
-            if not hasattr(self, 'eraser_permanent_mask') or self.eraser_permanent_mask is None:
-                self.eraser_permanent_mask = np.zeros_like(mask_final_uint8)
-            
-            # Combine the slider thresholds and manual pencil drawings
-            mask_combined = cv2.bitwise_or(mask_final_uint8, self.current_manual_add)
-            
-            # ---> FIXED: Subtract BOTH the persistent cuts AND the active temporary dragging strokes <---
-            mask_combined = cv2.bitwise_and(mask_combined, cv2.bitwise_not(self.eraser_permanent_mask))
-            mask_combined = cv2.bitwise_and(mask_combined, cv2.bitwise_not(self.current_manual_remove))
-            
-            labeled_mask, _ = measure.label(mask_combined > 0, return_num=True)
-            regions = measure.regionprops(labeled_mask, intensity_image=self.cached_gray)
+            state['min_area_actual'] = min_area_val
+            state['max_area_actual'] = max_area_val
 
-            valid_labels = []
-            valid_regions = []
+            # Flag to trace if we drew contours inside the conditional blocks
+            contours_drawn_manually = False
             
-            for r in regions:
-                if min_area_val <= r.area <= max_area_val:
-                    valid_labels.append(r.label)
-                    valid_regions.append(r)
+            # -----------------------------------------------------------------
+            # ---> CASE 1: THE OVERRIDE INTERCEPT (SUSPEND SLIDER RUNTIMES) <---
+            # -----------------------------------------------------------------
+            if getattr(self, 'mask_override_mode', False) and getattr(self, 'override_mask_data', None) is not None:
+                # Baseline mask layout starts strictly from the loaded file matrix
+                mask_base = self.override_mask_data.copy()
+                
+                # RETAIN MANUAL TOOLS: Let pencil additions and eraser modifications alter this base map
+                if self.current_manual_add is not None:
+                    mask_base = cv2.bitwise_or(mask_base, self.current_manual_add)
+                if getattr(self, 'eraser_permanent_mask', None) is not None:
+                    mask_base = cv2.bitwise_and(mask_base, cv2.bitwise_not(self.eraser_permanent_mask))
+                if self.current_manual_remove is not None:
+                    mask_base = cv2.bitwise_and(mask_base, cv2.bitwise_not(self.current_manual_remove))
+                    
+                self.current_mask = mask_base.copy()
+                
+                # Extract white contours directly from the modified static mask layout
+                contours, _ = cv2.findContours(mask_base, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay_rgb, contours, -1, (255, 255, 255), 2)
+                contours_drawn_manually = True
+                
+                # Static metadata message updates
+                stats_meta = "Mask View Mode: Raw Image Pipeline Suspended"
+                self.lbl_stats_integrated.config(text=f"{file_meta}\n{stats_meta}")
             
-            mask_filtered_area = np.isin(labeled_mask, valid_labels).astype(np.uint8) * 255
+            # -----------------------------------------------------------------
+            # ---> CASE 2: ORIGINAL ALGORITHMIC AUTO-DETECTION PROCESSING <---
+            # -----------------------------------------------------------------
+            elif self.auto_detect_enabled:
+                h_min, h_max = state.get('hue_min', 0), state.get('hue_max', 179)
+                v_min = state.get('int_min', 0)
+                v_max = state.get('int_max', 255)
+                
+                lower_bound = np.array([h_min, 30, v_min]) 
+                upper_bound = np.array([h_max, 255, v_max])
+                
+                # ---> FIXED: Restored the missing bit-range image filtering line <---
+                mask_filtered = cv2.inRange(self.cached_hsv, lower_bound, upper_bound)
+                
+                # 1. Base noise cleanup
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                mask_clean = cv2.morphologyEx(mask_filtered, cv2.MORPH_OPEN, kernel)
+                mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
+                
+                # 2. DYNAMIC FIBER STRIPPING (MORPHOLOGICAL OPENING)
+                circ_min = state.get('circ_min', 0)
+                if circ_min > 0:
+                    k_size = int((circ_min / 100.0) * 20) * 2 + 1 
+                    if k_size > 1:
+                        dynamic_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+                        mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_OPEN, dynamic_kernel)
+                
+                mask_final_uint8 = np.uint8(mask_clean)
+                
+                if not hasattr(self, 'eraser_permanent_mask') or self.eraser_permanent_mask is None:
+                    self.eraser_permanent_mask = np.zeros_like(mask_final_uint8)
+                
+                # Combine the slider thresholds and manual pencil drawings
+                mask_combined = cv2.bitwise_or(mask_final_uint8, self.current_manual_add)
+                mask_combined = cv2.bitwise_and(mask_combined, cv2.bitwise_not(self.eraser_permanent_mask))
+                mask_combined = cv2.bitwise_and(mask_combined, cv2.bitwise_not(self.current_manual_remove))
+                
+                labeled_mask, _ = measure.label(mask_combined > 0, return_num=True)
+                regions = measure.regionprops(labeled_mask, intensity_image=self.cached_gray)
 
-            # ---> NEW: Save the active binary matrix to the instance variable <---
-            self.current_mask = mask_filtered_area.copy()
-            num_clusters = len(valid_regions)
-            # -------------------------------------------
+                valid_labels = []
+                valid_regions = []
+                for r in regions:
+                    if min_area_val <= r.area <= max_area_val:
+                        valid_labels.append(r.label)
+                        valid_regions.append(r)
+                
+                mask_filtered_area = np.isin(labeled_mask, valid_labels).astype(np.uint8) * 255
+                self.current_mask = mask_filtered_area.copy()
+                
+                num_clusters = len(valid_regions)
+                mean_intensity = np.mean([r.intensity_mean for r in valid_regions]) if num_clusters > 0 else 0
+                areas_total = sum([r.area for r in valid_regions])
+                area_percentage = (areas_total / total_pixels) * 100 if total_pixels > 0 else 0
 
-            num_clusters = len(valid_regions)
-            mean_intensity = np.mean([r.intensity_mean for r in valid_regions]) if num_clusters > 0 else 0
-            areas_total = sum([r.area for r in valid_regions])
-            area_percentage = (areas_total / total_pixels) * 100 if total_pixels > 0 else 0
+                if 'pixel_size_um' not in state:
+                    state['pixel_size_um'] = self.get_pixel_size_um(state['file_path'])
+                
+                pixel_size = state['pixel_size_um']
+                if pixel_size is not None:
+                    area_um2 = areas_total * (pixel_size ** 2)
+                    area_um2_str = f" ({round(area_um2, 2)} sq \u03BCm)"
+                else:
+                    area_um2 = 0.0
+                    area_um2_str = " (Scale Unknown)"
 
-            # 1. Check metadata once and cache it
-            if 'pixel_size_um' not in state:
-                state['pixel_size_um'] = self.get_pixel_size_um(state['file_path'])
+                state['stats'] = {
+                    'area': float(areas_total),
+                    'area_percentage': round(area_percentage, 2),
+                    'area_um2': round(area_um2, 2), 
+                    'cluster_count': num_clusters,
+                    'mean_intensity': round(mean_intensity, 2)
+                }
+
+                contours, _ = cv2.findContours(mask_filtered_area, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay_rgb, contours, -1, (255, 255, 255), 2)
+                contours_drawn_manually = True
+                
+                stats_meta = f"Fluorescent Area: {round(area_percentage, 2)}%{area_um2_str} | Clusters: {num_clusters}"
+                self.lbl_stats_integrated.config(text=f"{file_meta}\n{stats_meta}")
             
-            pixel_size = state['pixel_size_um']
-            
-            # 2. Calculate the square microns
-            if pixel_size is not None:
-                area_um2 = areas_total * (pixel_size ** 2)
-                area_um2_str = f" ({round(area_um2, 2)} sq \u03BCm)"
+            # -----------------------------------------------------------------
+            # ---> CASE 3: PIPELINE AND OVERRIDES ALL OFF <---
+            # -----------------------------------------------------------------
             else:
-                area_um2 = 0.0
-                area_um2_str = " (Scale Unknown)"
+                self.current_mask = None
+                self.lbl_stats_integrated.config(text=f"{file_meta}\nView: Original Image (Auto Detect OFF)")
 
-            # 3. Save stats
-            state['stats'] = {
-                'area': float(areas_total),
-                'area_percentage': round(area_percentage, 2),
-                'area_um2': round(area_um2, 2), 
-                'cluster_count': num_clusters,
-                'mean_intensity': round(mean_intensity, 2)
-            }
+            # ---> DRAW TRANSLUCENT TEMPORARY ERASER OUTLINES WHILE DRAGGING <---
+            if self.current_manual_remove is not None and np.any(self.current_manual_remove > 0):
+                rem_contours, _ = cv2.findContours(self.current_manual_remove, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                red_border_overlay = overlay_rgb.copy()
+                cv2.drawContours(red_border_overlay, rem_contours, -1, (255, 0, 0), 2)
+                cv2.addWeighted(red_border_overlay, 0.80, overlay_rgb, 0.20, 0, overlay_rgb)
 
-            contours, _ = cv2.findContours(mask_filtered_area, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(overlay_rgb, contours, -1, (255, 255, 255), 2)
+            # ---> PENCIL & CIRCLE BORDERS (Only drawn if not already rendered inside Case 1 / Case 2) <---
+            if not contours_drawn_manually:
+                if self.current_manual_add is not None and np.any(self.current_manual_add > 0):
+                    add_contours, _ = cv2.findContours(self.current_manual_add, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    white_border_overlay = overlay_rgb.copy()
+                    cv2.drawContours(white_border_overlay, add_contours, -1, (255, 255, 255), 2)
+                    cv2.addWeighted(white_border_overlay, 0.80, overlay_rgb, 0.20, 0, overlay_rgb) 
+
+            # -----------------------------------------------------------------
+            # ---> TKINTER SCREEN CANVAS CALCULATIONS & POSITIONING <---
+            # -----------------------------------------------------------------
+            canvas_w = self.canvas.winfo_width()
+            canvas_h = self.canvas.winfo_height()
+            if canvas_w < 10: canvas_w, canvas_h = 800, 500 
             
-            # ---> 4. CRITICAL: Update the string format to include area_um2_str <---
-            stats_meta = f"Fluorescent Area: {round(area_percentage, 2)}%{area_um2_str} | Clusters: {num_clusters}"
-            self.lbl_stats_integrated.config(text=f"{file_meta}\n{stats_meta}")
-        else:
-            # ---> NEW: Reset mask tracker if Auto Detect is turned off <---
-            self.current_mask = None
-            self.lbl_stats_integrated.config(text=f"{file_meta}\nView: Original Image (Auto Detect OFF)")
+            img_h, img_w = overlay_rgb.shape[:2]
+            
+            base_scale = min(canvas_w / img_w, canvas_h / img_h)
+            self.base_w = max(1, int(img_w * base_scale))
+            self.base_h = max(1, int(img_h * base_scale))
+            
+            self.scale_x = img_w / self.base_w
+            self.scale_y = img_h / self.base_h
+            self.offset_x = (canvas_w - self.base_w) // 2
+            self.offset_y = (canvas_h - self.base_h) // 2
 
-        # ---> THE TEMPORARY RED BORDER GUIDE (WHILE DRAGGING) <---
-        if self.current_manual_remove is not None and np.any(self.current_manual_remove > 0):
-            rem_contours, _ = cv2.findContours(self.current_manual_remove, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            red_border_overlay = overlay_rgb.copy()
-            # Draws a hollow red outline (255, 0, 0) with a thickness of 2
-            cv2.drawContours(red_border_overlay, rem_contours, -1, (255, 0, 0), 2)
-            cv2.addWeighted(red_border_overlay, 0.80, overlay_rgb, 0.20, 0, overlay_rgb)
+            # Cache array in PIL container so fast trackpad zooming is fluid
+            self.base_pil_image = Image.fromarray(overlay_rgb)
+            self.is_processing = False
+            
+            # Trigger screen paint updates
+            self.fast_redraw()
 
-        # ---> PENCIL & CIRCLE BORDERS (White Only, Transparent Inside) <---
-        if self.current_manual_add is not None and np.any(self.current_manual_add > 0):
-            add_contours, _ = cv2.findContours(self.current_manual_add, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            white_border_overlay = overlay_rgb.copy()
-            cv2.drawContours(white_border_overlay, add_contours, -1, (255, 255, 255), 2)
-            cv2.addWeighted(white_border_overlay, 0.80, overlay_rgb, 0.20, 0, overlay_rgb) 
-
-
-        canvas_w = self.canvas.winfo_width()
-        canvas_h = self.canvas.winfo_height()
-        if canvas_w < 10: canvas_w, canvas_h = 800, 500 
-        
-        img_h, img_w = overlay_rgb.shape[:2]
-        
-        base_scale = min(canvas_w / img_w, canvas_h / img_h)
-        self.base_w = max(1, int(img_w * base_scale))
-        self.base_h = max(1, int(img_h * base_scale))
-        
-        self.scale_x = img_w / self.base_w
-        self.scale_y = img_h / self.base_h
-        self.offset_x = (canvas_w - self.base_w) // 2
-        self.offset_y = (canvas_h - self.base_h) // 2
-
-        # CACHE the heavy image processing result so zooming is instant
-        self.base_pil_image = Image.fromarray(overlay_rgb)
-        
-        self.is_processing = False
-        
-        # Trigger the lightweight drawing function
-        self.fast_redraw()
-
-    
     def fast_redraw(self):
         if not hasattr(self, 'base_pil_image'): return
         
@@ -1383,20 +1434,18 @@ class QuantificationTab(ttk.Frame):
             if hasattr(self, 'btn_next_img'): self.btn_next_img.config(state=tk.DISABLED)
             return
 
-        # Handle Previous Button state
         if self.current_index > 0:
             self.btn_prev_img.config(state=tk.NORMAL)
         else:
             self.btn_prev_img.config(state=tk.DISABLED)
 
-        # Handle Next Button state
         if self.current_index < len(self.image_states) - 1:
             self.btn_next_img.config(state=tk.NORMAL)
         else:
             self.btn_next_img.config(state=tk.DISABLED)
             
-        # Update text string label readout layer safely
-        if hasattr(self, 'lbl_img_count'):
+        # ---> THIS HASATTR FLAG PREVENTS RUNTIME CRASHES NOW THAT THE LABEL IS GONE <---
+        if hasattr(self, 'lbl_img_count') and self.lbl_img_count is not None:
             self.lbl_img_count.config(text=f"Image {self.current_index + 1} of {len(self.image_states)}")
 
     # --- Export Data ---
@@ -1557,8 +1606,8 @@ class QuantificationTab(ttk.Frame):
             messagebox.showerror("Error Saving", f"Failed to compress PNG output:\n{str(e)}")
 
     def apply_saved_mask(self):
-        """Loads a transparent custom-colored PNG mask back into the pipeline."""
-        if self.original_image_rgb is None:
+        """Loads an external transparent PNG mask, disabling auto-detect processing."""
+        if self.original_image_rgb is None or not self.image_states:
             messagebox.showwarning("No Image", "Load an active image target before applying masks.")
             return
 
@@ -1575,19 +1624,66 @@ class QuantificationTab(ttk.Frame):
             loaded_img = loaded_img.resize((w, h), Image.Resampling.NEAREST)
             img_np = np.array(loaded_img)
             
+            # Extract clean binary information from Alpha channel or Greyscale thresholding
             if img_np.shape[-1] == 4:
-                # ROBUST CHECK: Any pixel that has opacity (Alpha > 0) is parsed as a border mask, 
-                # regardless of whether the outline was saved as Red, Green, Blue, or White.
                 binary_mask = (img_np[:, :, 3] > 0).astype(np.uint8) * 255
             else:
                 gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
                 _, binary_mask = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
                 
-            self.current_mask = binary_mask
+            # Activating the override mechanism
+            self.mask_override_mode = True
+            self.override_mask_data = binary_mask.copy()
             
-            # Trigger your display pipeline to update the view and calculate stats
+            # Turn off Auto-Detect visually and functionally
+            self.auto_detect_enabled = False
+            if hasattr(self, 'btn_auto'):
+                self.btn_auto.config(text="Auto Detect: OFF", fg="yellow")
+            
+            # Fire the interface redraw pipeline
             self.process_image()
-                
-            messagebox.showinfo("Applied", "Mask outlines overlayed onto current frame matrix.")
+            messagebox.showinfo("Applied", "External mask successfully mapped. Heavy image calculations suspended.")
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to map external data frame:\n{str(e)}")
+
+    def export_current_image_view(self):
+        """Saves a lossless 100% resolution image copy of exactly what is active in the preview frame container."""
+        if not hasattr(self, 'base_pil_image') or self.base_pil_image is None:
+            messagebox.showwarning("No Image Data", "Load an image framework and map contours before attempting an export.")
+            return
+
+        # Prompt the user for an output path destination
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG Lossless Image", "*.png"), ("TIFF Image", "*.tif *.tiff"), ("JPEG Compressed Image", "*.jpg *.jpeg")],
+            title="Export Current Analysis View Layer As..."
+        )
+        if not file_path:
+            return
+
+        try:
+            # Grab the underlying master NumPy array frame directly from our high-res cache container
+            export_array = np.array(self.base_pil_image)
+
+            # Check format type extension requirements
+            if file_path.lower().endswith(('.tif', '.tiff')):
+                import tifffile
+                # Write an uncompressed high-fidelity scientific tiff array mapping profile
+                tifffile.imwrite(file_path, export_array, compression='zlib')
+                
+            elif file_path.lower().endswith('.png'):
+                # Convert the internal script RGB order back to OpenCV BGR color mapping layout
+                final_bgr = cv2.cvtColor(export_array, cv2.COLOR_RGB2BGR)
+                # Enforce absolute 0% compression down-sampling rules to preserve crystal clear line pixels
+                cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
+                
+            else:
+                final_bgr = cv2.cvtColor(export_array, cv2.COLOR_RGB2BGR)
+                # Enforce absolute 100% maximum quality factor rules to bypass standard JPEG macroblock artifacts
+                cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+
+            messagebox.showinfo("Export Complete", f"Successfully exported current analysis image layer to:\n{os.path.basename(file_path)}")
+            
+        except Exception as e:
+            messagebox.showerror("Export Failure", f"Failed saving rendered screen configuration to file system path grid context:\n{str(e)}")
