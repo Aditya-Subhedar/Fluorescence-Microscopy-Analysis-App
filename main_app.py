@@ -22,7 +22,7 @@ from tab6_oft_tracking import OFTTrackingTab
 class CytoQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CytoQuant Version 21")
+        self.root.title("CytoQuant Version 22")
         self.root.geometry("1920x1080")
 
         # Load Icon
@@ -57,6 +57,108 @@ class CytoQuantApp:
         # Tab 6: OFT Tracking
         self.tab6 = OFTTrackingTab(self.notebook)
         self.notebook.add(self.tab6, text="6. OFT Tracking  ")
+
+        # -----------------------------------------------------------------
+        # CENTRAL ROUTING & AUTO-FOCUS FUNCTIONALITY
+        # -----------------------------------------------------------------
+        # 1. Bind global hotkeys to the root window object
+        self.root.bind("<Left>", self.route_prev_image)
+        self.root.bind("<Right>", self.route_next_image)
+        self.root.bind("<Control-o>", self.route_open_file)
+        self.root.bind("<Control-O>", self.route_open_file)
+
+        # ---> NEW: CENTRAL UNDO / REDO BINDINGS <---
+        self.root.bind("<Control-z>", self.route_undo)
+        self.root.bind("<Control-Z>", self.route_undo)
+        self.root.bind("<Control-y>", self.route_redo)
+        self.root.bind("<Control-Y>", self.route_redo)
+
+        # ---> NEW: CENTRAL UP / DOWN ARROW BINDINGS FOR Z-STACKS <---
+        self.root.bind("<Up>", self.route_up_arrow)
+        self.root.bind("<Down>", self.route_down_arrow)
+
+        # 2. Watch for tab switches to shift focus dynamically
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_switched)
+
+    def on_tab_switched(self, event):
+        """Forces keyboard focus into the selected tab canvas for immediate shortcut usage."""
+        active_idx = self.notebook.index(self.notebook.select())
+        if active_idx == 0 and hasattr(self.tab1, 'canvas'):
+            self.tab1.canvas.focus_force()
+        elif active_idx == 1 and hasattr(self.tab2, 'canvas'):
+            self.tab2.canvas.focus_force()
+
+    def route_open_file(self, event=None):
+        """Routes Ctrl+O execution natively based on which tab viewport is visible."""
+        active_idx = self.notebook.index(self.notebook.select())
+        if active_idx == 0:
+            if hasattr(self.tab1, 'load_czi'): self.tab1.load_czi()
+        elif active_idx == 1:
+            if hasattr(self.tab2, 'load_files'): self.tab2.load_files()
+        return "break" # Stops native TKinter control hooks from overriding dialog outputs
+
+    def route_prev_image(self, event=None):
+        """Routes Left Arrow cleanly depending on the active notebook panel layout context."""
+        active_idx = self.notebook.index(self.notebook.select())
+        
+        if active_idx == 0:
+            # Tab 1: Check if the button exists and read its state using [] syntax
+            if hasattr(self.tab1, 'btn_prev_img') and self.tab1.btn_prev_img['state'] == tk.NORMAL:
+                if hasattr(self.tab1, 'prev_image'): 
+                    self.tab1.prev_image()
+        elif active_idx == 1:
+            # Tab 2: Check if the button exists and read its state safely
+            if hasattr(self.tab2, 'btn_prev_img') and self.tab2.btn_prev_img['state'] == tk.NORMAL:
+                if hasattr(self.tab2, 'prev_image'): 
+                    self.tab2.prev_image()
+
+    def route_next_image(self, event=None):
+        """Routes Right Arrow cleanly depending on the active notebook panel layout context."""
+        active_idx = self.notebook.index(self.notebook.select())
+        
+        if active_idx == 0:
+            # Tab 1: Validate next image button exists and is enabled
+            if hasattr(self.tab1, 'btn_next_img') and self.tab1.btn_next_img['state'] == tk.NORMAL:
+                if hasattr(self.tab1, 'next_image'): 
+                    self.tab1.next_image()
+        elif active_idx == 1:
+            # Tab 2: Validate next image button exists and is enabled
+            if hasattr(self.tab2, 'btn_next_img') and self.tab2.btn_next_img['state'] == tk.NORMAL:
+                if hasattr(self.tab2, 'next_image'): 
+                    self.tab2.next_image()
+
+    def route_undo(self, event=None):
+        """Intercepts Ctrl+Z and safely triggers Tab 2 manual drawing undo."""
+        active_idx = self.notebook.index(self.notebook.select())
+        if active_idx == 1: # Tab 2 is index 1
+            if hasattr(self.tab2, 'undo_action'):
+                self.tab2.undo_action()
+        return "break" # Prevents default OS textbox overrides
+
+    def route_redo(self, event=None):
+        """Intercepts Ctrl+Y and safely triggers Tab 2 manual drawing redo."""
+        active_idx = self.notebook.index(self.notebook.select())
+        if active_idx == 1: # Tab 2 is index 1
+            if hasattr(self.tab2, 'redo_action'):
+                self.tab2.redo_action()
+        return "break" # Prevents default OS textbox overrides
+    
+    def route_up_arrow(self, event=None):
+        """Intercepts Up Arrow and moves up 1 slice in Tab 1 Z-stack."""
+        active_idx = self.notebook.index(self.notebook.select())
+        if active_idx == 0:  # Tab 1 is index 0
+            if hasattr(self.tab1, 'change_z_slice'):
+                self.tab1.change_z_slice(1)  # +1 moves up the stack
+        return "break"  # Stops default widget scrolling overrides
+
+    def route_down_arrow(self, event=None):
+        """Intercepts Down Arrow and moves down 1 slice in Tab 1 Z-stack."""
+        active_idx = self.notebook.index(self.notebook.select())
+        if active_idx == 0:  # Tab 1 is index 0
+            if hasattr(self.tab1, 'change_z_slice'):
+                self.tab1.change_z_slice(-1) # -1 moves down the stack
+        return "break"  # Stops default widget scrolling overrides
+
 
 if __name__ == "__main__":
     root = tk.Tk()
