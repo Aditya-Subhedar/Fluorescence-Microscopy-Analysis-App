@@ -13,20 +13,37 @@ class PanelCreationTab(ttk.Frame):
         self.cell_images = {}      # key: (row, col), value: absolute filepath
         self.cell_rotations = {}   # key: (row, col), value: degrees (0, 90, 180, 270)
         self.grid_dims = (2, 2)
-        self.cell_aspect_ratio = 1.0  # Width/Height (Calculated dynamically if Original Ratio)
+        self.cell_aspect_ratio = 1.0  
+        # --- Bounding Box & Viewport State ---
+        self.panel_boxes = []         # List of dicts: {'x1', 'y1', 'x2', 'y2', 'color', 'scalable'}
+        self.clipboard_box = None     # NEW: Stores copied box
         
         # Previews
-        self.composite_pil = None  # Master high-res image
-        self.tk_img = None        # Scaled canvas image
-        self.cell_thumbnails = {} # Scaled thumbnails for canvas
+        self.composite_pil = None  
+        self.tk_img = None        
+        self.cell_thumbnails = {} 
 
         # Annotation / Figure settings
-        self.sublabel_color_rgb = (255, 255, 255)  # Labels inside image default to White
-        self.title_color_rgb = (0, 0, 0)          # Row/Col titles always Black
+        self.sublabel_color_rgb = (255, 255, 255)  
+        self.title_color_rgb = (0, 0, 0)          
         
-        # Undo/Redo (for image selections and rotations)
+        # Undo/Redo (for selections)
         self.undo_stack = [{'images': {}, 'rotations': {}}]
         self.redo_stack = []
+
+        # --- Bounding Box & Viewport State ---
+        self.panel_boxes = []         # List of dicts: {'x1', 'y1', 'x2', 'y2', 'color'}
+        self.selected_box_idx = None
+        self.interaction_state = "IDLE" # IDLE, DRAWING, DRAGGING, RESIZING
+        self.resize_handle = None       # top_left, top, right, etc.
+        
+        # Viewport parameters
+        self.view_scale = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
+        self.start_x = 0
+        self.start_y = 0
+        self.drag_start_box = None
 
         self.setup_ui()
         self.setup_keybindings()
@@ -101,6 +118,14 @@ class PanelCreationTab(ttk.Frame):
         font_frame = tk.LabelFrame(left_panel, text="🎨 Font Settings", padx=5, pady=5)
         font_frame.pack(fill=tk.X, pady=(0, 15))
         
+        # New Font Family Selection
+        font_family_frame = tk.Frame(font_frame)
+        font_family_frame.pack(fill=tk.X, pady=2)
+        tk.Label(font_family_frame, text="Font Family:").pack(side=tk.LEFT)
+        self.combo_font = ttk.Combobox(font_family_frame, values=["Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma", "Georgia"], state="readonly", width=12)
+        self.combo_font.pack(side=tk.RIGHT)
+        self.combo_font.set("Arial")
+
         color_row = tk.Frame(font_frame)
         color_row.pack(fill=tk.X, pady=2)
         tk.Label(color_row, text="Img Label Color:").pack(side=tk.LEFT)
@@ -121,6 +146,11 @@ class PanelCreationTab(ttk.Frame):
         self.spin_title_size = tk.Spinbox(grid_sizer, from_=10, to=500, increment=10, width=5)
         self.spin_title_size.grid(row=1, column=1)
         self.spin_title_size.delete(0, tk.END); self.spin_title_size.insert(0, "56")
+
+        # Box Options
+        box_frame = tk.Frame(left_panel)
+        box_frame.pack(fill=tk.X, pady=5)
+        tk.Button(box_frame, text="🗑 Delete Selected Box", command=self.delete_selected_box, bg="#d32f2f", fg="white").pack(fill=tk.X)
         
         # 4. Global Actions / Export
         tk.Button(left_panel, text="🔄 Build / Refresh Preview", command=self.action_build_composite, bg="#1976d2", fg="white", font=("Arial", 9, "bold")).pack(fill=tk.X, pady=(10, 5))
@@ -143,18 +173,18 @@ class PanelCreationTab(ttk.Frame):
         self.preview_frame = tk.Frame(root_frame, bg="#1a1a1a") 
         self.preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        self.v_scroll = tk.Scrollbar(self.preview_frame, orient=tk.VERTICAL)
-        self.h_scroll = tk.Scrollbar(self.preview_frame, orient=tk.HORIZONTAL)
-        self.canvas = tk.Canvas(self.preview_frame, bg="#1a1a1a", highlightthickness=0, yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
-        
-        self.v_scroll.config(command=self.canvas.yview)
-        self.h_scroll.config(command=self.canvas.xview)
-        
-        self.v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self.canvas = tk.Canvas(self.preview_frame, bg="#1a1a1a", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
+        # Canvas Interactions
         self.canvas.bind("<Configure>", lambda e: self.render_canvas_preview())
+        self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
+        self.canvas.bind("<ButtonPress-2>", self.start_pan)
+        self.canvas.bind("<B2-Motion>", self.do_pan)
+        
+        self.canvas.bind("<ButtonPress-1>", self.on_left_down)
+        self.canvas.bind("<B1-Motion>", self.on_left_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_left_up)
 
     def setup_keybindings(self):
         toplevel = self.winfo_toplevel()
@@ -162,7 +192,172 @@ class PanelCreationTab(ttk.Frame):
         toplevel.bind("<Control-y>", self.redo)
         toplevel.bind("<Control-s>", self.action_export_panel)
         toplevel.bind("<Control-g>", self.action_generate_grid)
+        toplevel.bind("<Delete>", lambda e: self.delete_selected_box())
+        toplevel.bind("<BackSpace>", lambda e: self.delete_selected_box())
 
+    # --- MATH & COORDINATE CONVERSION ---
+    def screen_to_img(self, sx, sy):
+        return (sx - self.pan_x) / self.view_scale, (sy - self.pan_y) / self.view_scale
+
+    def img_to_screen(self, ix, iy):
+        return ix * self.view_scale + self.pan_x, iy * self.view_scale + self.pan_y
+
+    # --- INTERACTION CONTROLS (PAN, ZOOM, DRAW) ---
+    def on_mouse_wheel(self, event):
+        if not self.composite_pil: return
+        zoom_factor = 1.1 if event.delta > 0 else 0.9
+        
+        sx, sy = event.x, event.y
+        ix, iy = self.screen_to_img(sx, sy)
+        
+        self.view_scale *= zoom_factor
+        
+        self.pan_x = sx - ix * self.view_scale
+        self.pan_y = sy - iy * self.view_scale
+        
+        self.render_canvas_preview()
+
+    def start_pan(self, event):
+        self.canvas.config(cursor="fleur")
+        self.start_x = event.x
+        self.start_y = event.y
+        self.start_pan_x = self.pan_x
+        self.start_pan_y = self.pan_y
+
+    def do_pan(self, event):
+        dx = event.x - self.start_x
+        dy = event.y - self.start_y
+        self.pan_x = self.start_pan_x + dx
+        self.pan_y = self.start_pan_y + dy
+        
+        self.canvas.coords("bg", self.pan_x, self.pan_y)
+        self.draw_interactive_elements()
+        
+    def get_handle_rects(self, box):
+        x1, y1 = self.img_to_screen(box['x1'], box['y1'])
+        x2, y2 = self.img_to_screen(box['x2'], box['y2'])
+        hw = 5 
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        return {
+            "top_left": (x1-hw, y1-hw, x1+hw, y1+hw),
+            "top_right": (x2-hw, y1-hw, x2+hw, y1+hw),
+            "bottom_left": (x1-hw, y2-hw, x1+hw, y2+hw),
+            "bottom_right": (x2-hw, y2-hw, x2+hw, y2+hw),
+            "top": (cx-hw, y1-hw, cx+hw, y1+hw),
+            "bottom": (cx-hw, y2-hw, cx+hw, y2+hw),
+            "left": (x1-hw, cy-hw, x1+hw, cy+hw),
+            "right": (x2-hw, cy-hw, x2+hw, cy+hw)
+        }
+
+    def on_left_down(self, event):
+        if not self.composite_pil: return
+        self.start_x, self.start_y = self.screen_to_img(event.x, event.y)
+        
+        if self.selected_box_idx is not None:
+            box = self.panel_boxes[self.selected_box_idx]
+            
+            # NEW: Only allow resizing if the box is permitted to scale
+            if box.get('scalable', True):
+                handles = self.get_handle_rects(box)
+                for handle_name, (hx1, hy1, hx2, hy2) in handles.items():
+                    if hx1 <= event.x <= hx2 and hy1 <= event.y <= hy2:
+                        self.interaction_state = "RESIZING"
+                        self.resize_handle = handle_name
+                        self.drag_start_box = copy.deepcopy(box)
+                        return
+
+        for i, box in reversed(list(enumerate(self.panel_boxes))):
+            x1, y1 = self.img_to_screen(box['x1'], box['y1'])
+            x2, y2 = self.img_to_screen(box['x2'], box['y2'])
+            min_x, max_x = min(x1, x2), max(x1, x2)
+            min_y, max_y = min(y1, y2), max(y1, y2)
+            
+            if min_x <= event.x <= max_x and min_y <= event.y <= max_y:
+                self.selected_box_idx = i
+                self.interaction_state = "DRAGGING"
+                self.drag_start_box = copy.deepcopy(box)
+                self.draw_interactive_elements()
+                return
+
+        self.selected_box_idx = None
+        self.interaction_state = "DRAWING"
+        # NEW: Ensure fresh hand-drawn boxes are explicitly marked as scalable
+        new_box = {'x1': self.start_x, 'y1': self.start_y, 'x2': self.start_x, 'y2': self.start_y, 'color': '#FFFF00', 'scalable': True}
+        self.panel_boxes.append(new_box)
+        self.selected_box_idx = len(self.panel_boxes) - 1
+        self.draw_interactive_elements()
+
+    def on_left_drag(self, event):
+        if self.interaction_state == "IDLE" or self.selected_box_idx is None: return
+        
+        curr_img_x, curr_img_y = self.screen_to_img(event.x, event.y)
+        box = self.panel_boxes[self.selected_box_idx]
+
+        if self.interaction_state == "DRAWING":
+            box['x2'] = curr_img_x
+            box['y2'] = curr_img_y
+
+        elif self.interaction_state == "DRAGGING":
+            dx = curr_img_x - self.start_x
+            dy = curr_img_y - self.start_y
+            box['x1'] = self.drag_start_box['x1'] + dx
+            box['y1'] = self.drag_start_box['y1'] + dy
+            box['x2'] = self.drag_start_box['x2'] + dx
+            box['y2'] = self.drag_start_box['y2'] + dy
+
+        elif self.interaction_state == "RESIZING":
+            if "left" in self.resize_handle: box['x1'] = curr_img_x
+            if "right" in self.resize_handle: box['x2'] = curr_img_x
+            if "top" in self.resize_handle: box['y1'] = curr_img_y
+            if "bottom" in self.resize_handle: box['y2'] = curr_img_y
+
+        self.draw_interactive_elements()
+
+    def on_left_up(self, event):
+        self.canvas.config(cursor="")
+        if self.interaction_state == "DRAWING":
+            box = self.panel_boxes[self.selected_box_idx]
+            if abs(box['x2'] - box['x1']) < 5 or abs(box['y2'] - box['y1']) < 5:
+                self.panel_boxes.pop(self.selected_box_idx)
+                self.selected_box_idx = None
+        
+        if self.selected_box_idx is not None:
+            box = self.panel_boxes[self.selected_box_idx]
+            box['x1'], box['x2'] = min(box['x1'], box['x2']), max(box['x1'], box['x2'])
+            box['y1'], box['y2'] = min(box['y1'], box['y2']), max(box['y1'], box['y2'])
+
+        self.interaction_state = "IDLE"
+        self.draw_interactive_elements()
+
+    def delete_selected_box(self):
+        if self.selected_box_idx is not None and self.selected_box_idx < len(self.panel_boxes):
+            self.panel_boxes.pop(self.selected_box_idx)
+            self.selected_box_idx = None
+            self.draw_interactive_elements()
+
+    def copy_selected_box(self):
+        if self.selected_box_idx is not None and self.selected_box_idx < len(self.panel_boxes):
+            self.clipboard_box = copy.deepcopy(self.panel_boxes[self.selected_box_idx])
+
+    def paste_box(self):
+        if self.clipboard_box is not None:
+            new_box = copy.deepcopy(self.clipboard_box)
+            
+            # Offset the box slightly so it doesn't paste invisibly on top of the old one
+            offset = 20 / self.view_scale 
+            new_box['x1'] += offset
+            new_box['y1'] += offset
+            new_box['x2'] += offset
+            new_box['y2'] += offset
+            
+            # Restrict scaling on the pasted box
+            new_box['scalable'] = False
+            
+            self.panel_boxes.append(new_box)
+            self.selected_box_idx = len(self.panel_boxes) - 1
+            self.draw_interactive_elements()
+
+    # --- GRID / SELECTION LOGIC ---
     def save_selection_state(self):
         state = {
             'images': copy.deepcopy(self.cell_images),
@@ -180,8 +375,7 @@ class PanelCreationTab(ttk.Frame):
             self.cell_rotations = copy.deepcopy(top_state['rotations'])
             self.cell_aspect_ratio = self.get_cell_aspect()
             self.generate_canvas_placeholders()
-            if self.composite_pil is not None:
-                self.action_build_composite()
+            if self.composite_pil is not None: self.action_build_composite()
         else:
             messagebox.showinfo("Info", "Nothing to undo in selections.")
 
@@ -193,8 +387,7 @@ class PanelCreationTab(ttk.Frame):
             self.undo_stack.append(state)
             self.cell_aspect_ratio = self.get_cell_aspect()
             self.generate_canvas_placeholders()
-            if self.composite_pil is not None:
-                self.action_build_composite()
+            if self.composite_pil is not None: self.action_build_composite()
         else:
             messagebox.showinfo("Info", "Nothing to redo in selections.")
 
@@ -204,17 +397,14 @@ class PanelCreationTab(ttk.Frame):
         if "Landscape" in choice: return 4.0 / 3.0
         if "Portrait" in choice: return 3.0 / 4.0
         if "Original" in choice:
-            # Dynamically determine from first loaded image, factoring in manual rotation alignment
             for (r, c), path in self.cell_images.items():
                 if path and os.path.exists(path):
                     try:
                         with Image.open(path) as img:
                             rot = self.cell_rotations.get((r, c), 0)
-                            if rot in [90, 270]:
-                                return img.size[1] / img.size[0]
+                            if rot in [90, 270]: return img.size[1] / img.size[0]
                             return img.size[0] / img.size[1]
-                    except:
-                        pass
+                    except: pass
             return 1.0
         return 1.0
 
@@ -233,8 +423,7 @@ class PanelCreationTab(ttk.Frame):
             self.cell_rotations[(row, col)] = (curr_rot + angle) % 360
             self.cell_aspect_ratio = self.get_cell_aspect()
             self.generate_canvas_placeholders()
-            if self.composite_pil is not None:
-                self.action_build_composite()
+            if self.composite_pil is not None: self.action_build_composite()
 
     def action_generate_grid(self, event=None):
         try:
@@ -245,6 +434,7 @@ class PanelCreationTab(ttk.Frame):
             
             self.composite_pil = None 
             self.tk_img = None
+            self.panel_boxes.clear() 
             
             if list(self.cell_images.keys()) and (r != len(set(k[0] for k in self.cell_images.keys())) or c != len(set(k[1] for k in self.cell_images.keys()))):
                 if messagebox.askyesno("Clear Images?", "Grid dimensions changed. Clear currently selected images?"):
@@ -293,38 +483,46 @@ class PanelCreationTab(ttk.Frame):
                 x2 = x1 + self.canvas_cell_w
                 y2 = y1 + self.canvas_cell_h
                 
-                rect_id = self.canvas.create_rectangle(x1, y1, x2, y2, outline="#444444", dash=(4,4), fill="#2a2a2a")
+                self.canvas.create_rectangle(x1, y1, x2, y2, outline="#444444", dash=(4,4), fill="#2a2a2a")
                 
                 path = self.cell_images.get((r, c))
                 if path:
                     self.draw_cell_thumbnail(r, c, x1, y1, x2, y2, path)
                 else:
-                    btn = tk.Button(self.canvas, text=f"Select Img\n({r},{c})", font=("Arial", 8), bg="#333333", fg="white", command=lambda row=r, col=c: self.select_image_for_cell(row, col))
+                    btn = tk.Button(self.canvas, text=f"Select Img(s)\n({r},{c})", font=("Arial", 8), bg="#333333", fg="white", command=lambda row=r, col=c: self.select_images_for_cell(row, col))
                     self.canvas.create_window(x1 + self.canvas_cell_w//2, y1 + self.canvas_cell_h//2, window=btn, anchor=tk.CENTER)
 
-        self.canvas.config(scrollregion=(0, 0, cw, ch))
-
-    def select_image_for_cell(self, row, col):
+    def select_images_for_cell(self, start_row, start_col):
         f_types = [("Microscopy Images", "*.tif *.tiff *.png *.jpg *.jpeg"), ("All Files", "*.*")]
-        path = filedialog.askopenfilename(title=f"Select Image for Row {row}, Col {col}", filetypes=f_types)
-        if not path: return
+        paths = filedialog.askopenfilenames(title=f"Select Image(s) starting from Row {start_row}, Col {start_col}", filetypes=f_types)
+        if not paths: return
         
         self.save_selection_state()
-        self.cell_images[(row, col)] = path
-        if (row, col) not in self.cell_rotations:
-            self.cell_rotations[(row, col)] = 0
+        
+        r, c = start_row, start_col
+        rows, cols = self.grid_dims
+        
+        for path in paths:
+            if r >= rows: 
+                break 
             
+            self.cell_images[(r, c)] = path
+            if (r, c) not in self.cell_rotations:
+                self.cell_rotations[(r, c)] = 0
+            
+            c += 1
+            if c >= cols:
+                c = 0
+                r += 1
+                
         self.cell_aspect_ratio = self.get_cell_aspect()
         self.generate_canvas_placeholders()
 
     def draw_cell_thumbnail(self, r, c, x1, y1, x2, y2, path):
         try:
             pil_img = Image.open(path)
-            
-            # Apply real-time hardware transformation step
             rot = self.cell_rotations.get((r, c), 0)
-            if rot != 0:
-                pil_img = pil_img.rotate(rot, expand=True)
+            if rot != 0: pil_img = pil_img.rotate(rot, expand=True)
 
             target_w = max(1, int(self.canvas_cell_w))
             target_h = max(1, int(self.canvas_cell_h))
@@ -341,9 +539,8 @@ class PanelCreationTab(ttk.Frame):
                 hex_lbl = f"#{self.sublabel_color_rgb[0]:02x}{self.sublabel_color_rgb[1]:02x}{self.sublabel_color_rgb[2]:02x}"
                 self.canvas.create_text(x1 + 8, y1 + 8, text=f"{label_char}.", fill=hex_lbl, anchor=tk.NW, font=("Arial", 11, "bold"))
             
-            # Action Links Layered Directly onto the Image Overlay Box Geometry
             text_id = self.canvas.create_text(x2-6, y2-6, text="Change...", fill="#00e676", anchor=tk.SE, font=("Arial", 8, "bold"))
-            self.canvas.tag_bind(text_id, "<Button-1>", lambda e, row=r, col=c: self.select_image_for_cell(row, col))
+            self.canvas.tag_bind(text_id, "<Button-1>", lambda e, row=r, col=c: self.select_images_for_cell(row, col))
             
             rot_ccw_id = self.canvas.create_text(x1+6, y2-6, text="⟲ CCW", fill="#ff9100", anchor=tk.SW, font=("Arial", 8, "bold"))
             self.canvas.tag_bind(rot_ccw_id, "<Button-1>", lambda e, row=r, col=c: self.rotate_cell(row, col, -90))
@@ -380,9 +577,23 @@ class PanelCreationTab(ttk.Frame):
         title_font_size = int(self.spin_title_size.get())
         sublabel_font_size = int(self.spin_sublabel_size.get())
         
+        selected_font = self.combo_font.get().lower().replace(" ", "")
+        
         def get_pil_font(size_px, bold=False):
-            possible_fonts = ["arialbd.ttf" if bold else "arial.ttf", "arial.ttf", "DejaVuSans.ttf"]
-            for f in possible_fonts:
+            font_map = {
+                "arial": ("arialbd.ttf", "arial.ttf"),
+                "timesnewroman": ("timesbd.ttf", "times.ttf"),
+                "couriernew": ("courbd.ttf", "cour.ttf"),
+                "verdana": ("verdanab.ttf", "verdana.ttf"),
+                "tahoma": ("tahomabd.ttf", "tahoma.ttf"),
+                "georgia": ("georgiab.ttf", "georgia.ttf")
+            }
+            
+            fonts_to_try = font_map.get(selected_font, ("arialbd.ttf", "arial.ttf"))
+            if not bold:
+                fonts_to_try = (fonts_to_try[1], fonts_to_try[0])
+            
+            for f in fonts_to_try + ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf"):
                 try: return ImageFont.truetype(f, size_px)
                 except: continue
             return ImageFont.load_default()
@@ -390,7 +601,6 @@ class PanelCreationTab(ttk.Frame):
         font_titles = get_pil_font(title_font_size, bold=True)
         font_sublabels = get_pil_font(sublabel_font_size, bold=True)
         
-        # --- DYNAMIC MARGIN CALCULATION ENGINE ---
         dummy_img = Image.new("RGBA", (10, 10))
         dummy_draw = ImageDraw.Draw(dummy_img)
         
@@ -399,7 +609,6 @@ class PanelCreationTab(ttk.Frame):
             bbox = dummy_draw.textbbox((0, 0), title, font=font_titles) if hasattr(dummy_draw, 'textbbox') else (0,0,len(title)*title_font_size*0.6, title_font_size)
             tw = bbox[2] - bbox[0]
             th = bbox[3] - bbox[1]
-            # If vertical orientation is requested, width profile swapped into its standard height
             current_w = th if self.combo_row_orient.get() == "Sideways (90° CCW)" else tw
             if current_w > max_row_text_w: max_row_text_w = current_w
             
@@ -411,28 +620,22 @@ class PanelCreationTab(ttk.Frame):
 
         left_margin = int(max_row_text_w + (gap_orig if row_title_strs else gap_orig // 2))
         top_margin = int(max_col_text_h + (gap_orig if col_title_strs else gap_orig // 2))
-        
-        if "Outside" in labels_mode:
-            left_margin = max(left_margin, int(sublabel_font_size * 1.5))
+        if "Outside" in labels_mode: left_margin = max(left_margin, int(sublabel_font_size * 1.5))
             
-        left_margin += 20
-        top_margin += 20
+        left_margin += 20; top_margin += 20
         right_margin = gap_orig // 2 + 20
         bottom_margin = gap_orig // 2 + 20
         
         total_w = left_margin + cols * target_cell_w + (cols - 1) * gap_orig + right_margin
         total_h = top_margin + rows * target_cell_h + (rows - 1) * gap_orig + bottom_margin
         
-        # --- INITIALIZE WHITE BACKGROUND SHEET ---
         self.composite_pil = Image.new("RGBA", (int(total_w), int(total_h)), (255, 255, 255, 255))
         draw = ImageDraw.Draw(self.composite_pil)
         
         title_color_rgba = self.title_color_rgb + (255,)
         sublabel_color_rgba = self.sublabel_color_rgb + (255,)
-        
         COLUMN_TITLE_PADDING = 35
         
-        # Render Column Titles
         for i, title in enumerate(col_title_strs):
             if i >= cols: break
             col_cx = left_margin + i * (target_cell_w + gap_orig) + target_cell_w // 2
@@ -440,7 +643,6 @@ class PanelCreationTab(ttk.Frame):
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]            
             draw.text((col_cx - tw // 2, top_margin - th - COLUMN_TITLE_PADDING), title, fill=title_color_rgba, font=font_titles)
             
-        # Render Row Titles
         for i, title in enumerate(row_title_strs):
             if i >= rows: break
             row_cy = top_margin + i * (target_cell_h + gap_orig) + target_cell_h // 2
@@ -448,23 +650,16 @@ class PanelCreationTab(ttk.Frame):
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
             
             if self.combo_row_orient.get() == "Sideways (90° CCW)":
-                # Create vertical presentation using clean text layer rotation
-                txt_w = max(1, int(tw + 4))
-                txt_h = max(1, int(th + 4))
+                txt_w, txt_h = max(1, int(tw + 4)), max(1, int(th + 4))
                 text_layer = Image.new("RGBA", (txt_w, txt_h), (0, 0, 0, 0))
                 layer_draw = ImageDraw.Draw(text_layer)
                 layer_draw.text((-bbox[0], -bbox[1]), title, fill=title_color_rgba, font=font_titles)
-                
                 rotated_txt = text_layer.rotate(90, expand=True)
                 rt_w, rt_h = rotated_txt.size
-                
-                px = left_margin - rt_w - 20
-                py = row_cy - rt_h // 2
-                self.composite_pil.alpha_composite(rotated_txt, (int(px), int(py)))
+                self.composite_pil.alpha_composite(rotated_txt, (int(left_margin - rt_w - 20), int(row_cy - rt_h // 2)))
             else:
                 draw.text((left_margin - tw - 20, row_cy - th // 2), title, fill=title_color_rgba, font=font_titles)
 
-        # Compositing High-Res Grid
         for r in range(rows):
             for c in range(cols):
                 path = self.cell_images.get((r, c))
@@ -475,48 +670,86 @@ class PanelCreationTab(ttk.Frame):
                     try:
                         with Image.open(path) as img:
                             rot = self.cell_rotations.get((r, c), 0)
-                            if rot != 0:
-                                img = img.rotate(rot, expand=True)
+                            if rot != 0: img = img.rotate(rot, expand=True)
                             scaled_img = img.convert("RGBA").resize((int(target_cell_w), int(target_cell_h)), Image.Resampling.LANCZOS)
                             self.composite_pil.alpha_composite(scaled_img, (int(px), int(py)))
-                    except Exception as e:
+                    except Exception:
                         draw.rectangle([px, py, px+target_cell_w, py+target_cell_h], outline="red", width=4)
                 else:
                     draw.rectangle([px, py, px+target_cell_w, py+target_cell_h], fill=(240, 240, 240, 255), outline=(200, 200, 200, 255), width=2)
                 
                 label_char = chr(65 + r * cols + c)
-                label_str = f"{label_char}."
-                
                 if "Inside" in labels_mode:
                     offset = sublabel_font_size // 2
-                    draw.text((px + offset, py + offset), label_str, fill=sublabel_color_rgba, font=font_sublabels)
+                    draw.text((px + offset, py + offset), f"{label_char}.", fill=sublabel_color_rgba, font=font_sublabels)
                 elif "Outside" in labels_mode:
-                    draw.text((px - int(sublabel_font_size * 0.9), py), label_str, fill=sublabel_color_rgba, font=font_sublabels)
+                    draw.text((px - int(sublabel_font_size * 0.9), py), f"{label_char}.", fill=sublabel_color_rgba, font=font_sublabels)
         
-        self.render_canvas_preview()
-        messagebox.showinfo("Success", "High-Resolution composite built cleanly with decoupled text properties.")
+        # Reset Viewport
+        cw = max(50, self.canvas.winfo_width())
+        ch = max(50, self.canvas.winfo_height())
+        iw, ih = self.composite_pil.size
+        
+        self.view_scale = min((cw - 40) / iw, (ch - 40) / ih)
+        if self.view_scale > 1.0: self.view_scale = 1.0
+        
+        self.pan_x = (cw - (iw * self.view_scale)) / 2
+        self.pan_y = (ch - (ih * self.view_scale)) / 2
 
+        self.render_canvas_preview()
+        messagebox.showinfo("Success", "High-Resolution composite built. You can now zoom (scroll), pan (middle click), and draw boxes (left click) directly on it.")
+
+    # --- SEPARATED RENDERING ENGINE ---
+    
     def render_canvas_preview(self, event=None):
         if self.composite_pil is None:
              if self.grid_dims: self.generate_canvas_placeholders()
              return
 
-        cw = max(50, self.canvas.winfo_width())
-        ch = max(50, self.canvas.winfo_height())
-
-        iw, ih = self.composite_pil.size
-        scale = min((cw - 40) / iw, (ch - 40) / ih)
-        if scale > 1.0: scale = 1.0
+        # Crucial Fix: Wipe the entire canvas to clear out the interactive placeholder text
+        self.canvas.delete("all")
         
-        target_w = max(1, int(iw * scale))
-        target_h = max(1, int(ih * scale))
+        target_w = max(1, int(self.composite_pil.size[0] * self.view_scale))
+        target_h = max(1, int(self.composite_pil.size[1] * self.view_scale))
         
-        resized_comp = self.composite_pil.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        resized_comp = self.composite_pil.resize((target_w, target_h), Image.Resampling.BILINEAR)
         self.tk_img = ImageTk.PhotoImage(resized_comp)
         
-        self.canvas.delete("all")
-        self.canvas.create_image(cw//2, ch//2, anchor=tk.CENTER, image=self.tk_img)
-        self.canvas.config(scrollregion=(0, 0, cw, ch))
+        self.canvas.create_image(self.pan_x, self.pan_y, anchor=tk.NW, image=self.tk_img, tags="bg")
+        self.canvas.tag_lower("bg")
+        
+        self.draw_interactive_elements()
+
+    def draw_interactive_elements(self):
+        self.canvas.delete("overlay")
+        for i, box in enumerate(self.panel_boxes):
+            x1, y1 = self.img_to_screen(box['x1'], box['y1'])
+            x2, y2 = self.img_to_screen(box['x2'], box['y2'])
+            
+            is_selected = (i == self.selected_box_idx)
+            outline_color = "#FFD700" if is_selected else "#FFFFFF"
+            dash_pattern = (4, 4) if not is_selected else None
+
+            self.canvas.create_rectangle(x1, y1, x2, y2, outline=outline_color, width=2, dash=dash_pattern, tags="overlay")
+            
+            if is_selected:
+                # NEW: Only draw white resize handles if the box is scalable
+                if box.get('scalable', True):
+                    handles = self.get_handle_rects(box)
+                    for hx1, hy1, hx2, hy2 in handles.values():
+                        self.canvas.create_rectangle(hx1, hy1, hx2, hy2, fill="white", outline="black", tags="overlay")
+
+    def draw_dashed_line(self, draw, pt1, pt2, fill, width, dash_len=10):
+        x1, y1 = pt1
+        x2, y2 = pt2
+        dist = ((x2 - x1)**2 + (y2 - y1)**2)**0.5
+        if dist == 0: return
+        dx, dy = (x2 - x1) / dist, (y2 - y1) / dist
+        
+        for i in range(0, int(dist), dash_len * 2):
+            start = (x1 + dx * i, y1 + dy * i)
+            end = (x1 + dx * min(i + dash_len, dist), y1 + dy * min(i + dash_len, dist))
+            draw.line([start, end], fill=fill, width=width)
 
     def action_export_panel(self, event=None):
         if self.composite_pil is None:
@@ -531,10 +764,26 @@ class PanelCreationTab(ttk.Frame):
         if not path: return
         
         try:
+            export_pil = self.composite_pil.copy()
+            draw = ImageDraw.Draw(export_pil)
+            
+            img_w, img_h = export_pil.size
+            dyn_thick = max(3, int(min(img_w, img_h) * 0.003))
+            dash_len = dyn_thick * 4
+
+            for box in self.panel_boxes:
+                x1, y1 = box['x1'], box['y1']
+                x2, y2 = box['x2'], box['y2']
+                self.draw_dashed_line(draw, (x1, y1), (x2, y1), fill="yellow", width=dyn_thick, dash_len=dash_len)
+                self.draw_dashed_line(draw, (x1, y2), (x2, y2), fill="yellow", width=dyn_thick, dash_len=dash_len)
+                self.draw_dashed_line(draw, (x1, y1), (x1, y2), fill="yellow", width=dyn_thick, dash_len=dash_len)
+                self.draw_dashed_line(draw, (x2, y1), (x2, y2), fill="yellow", width=dyn_thick, dash_len=dash_len)
+
             _, ext = os.path.splitext(path)
             mode = "RGBA" if ext.lower() in [".png", ".tif", ".tiff"] else "RGB"
-            export_img = self.composite_pil.convert(mode)
-            export_img.save(path)
+            final_export = export_pil.convert(mode)
+            final_export.save(path)
+            
             messagebox.showinfo("Export Complete", f"Figure exported successfully:\n{path}")
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to save asset:\n{str(e)}")
