@@ -1377,7 +1377,7 @@ class PreProcessingTab(ttk.Frame):
         if self.raw_volume is None: return
         file_path = filedialog.asksaveasfilename(
             defaultextension=".tif",
-            filetypes=[("TIFF File", "*.tif *.tiff"), ("JPEG File", "*.jpg *.jpeg"), ("PNG File", "*.png")],
+            filetypes=[("TIFF File", "*.tif *.tiff"), ("PNG File", "*.png"), ("JPEG File", "*.jpg *.jpeg")],
             title="Save Processed Image As..."
         )
         if not file_path: return
@@ -1388,46 +1388,54 @@ class PreProcessingTab(ttk.Frame):
                 if z_start > z_end: z_start, z_end = z_end, z_start
                 stack_slice = self.raw_volume[z_start:z_end+1]
                 target_data = np.max(stack_slice, axis=0) 
-                
-                # THE FIX: Pick the mid-point stack index for looking up your percentile math cache
                 export_z = int((z_start + z_end) // 2)
             else:
                 export_z = self.scale_z.get()
                 target_data = self.raw_volume[export_z]
             
-            # --- THE FIX: Pass the precise target Z index to prevent positional argument errors ---
             final_rgb = self.apply_image_math(target_data, current_z=export_z)
-            
-            # 2. Burn the scale bar into the image pixels
             final_rgb = self.stamp_scale_bar_for_export(final_rgb)
             
-            # 3. Save to disk (TIFF retains RGB, others convert to BGR for OpenCV)
+            # Ensure data layout is continuous in memory for optimal writing performance
+            final_rgb = np.ascontiguousarray(final_rgb)
+            
             if file_path.lower().endswith(('.tif', '.tiff')):
-                # Fetch the hidden pixel size
                 try:
                     pixel_size_um = float(self.entry_pixel_size.get())
                 except (ValueError, AttributeError):
-                    pixel_size_um = 0 # Fallback if empty or invalid
+                    pixel_size_um = 0 
                 
-                # If we have a valid pixel size, save with spatial metadata
                 if pixel_size_um > 0:
-                    # TIFF standard uses pixels per centimeter. 1 cm = 10,000 um.
-                    pixels_per_cm = 10000 / pixel_size_um
+                    # Convert to a clean rational tuple to prevent metadata truncation bugs
+                    # 1 cm = 10,000 um. We store resolution as pixels per 10,000 units.
+                    resolution_val = 10000.0 / pixel_size_um
+                    
+                    # Convert to rational fraction (numerator, denominator) for the TIFF standard
+                    res_fraction = float(resolution_val).as_integer_ratio()
                     
                     tifffile.imwrite(
                         file_path, 
                         final_rgb,
-                        resolution=(pixels_per_cm, pixels_per_cm),
-                        resolutionunit=3, # 3 = CENTIMETER in TIFF standard
-                        metadata={'unit': 'um'} # Ensures ImageJ/Fiji reads the unit correctly
+                        resolution=res_fraction,
+                        resolutionunit=3,  # 3 = CENTIMETER
+                        metadata={'unit': 'um'},  # Standard for ImageJ/Fiji compatibility
+                        compression='zlib'  # Enforce lossless compression to preserve sharpness
                     )
                 else:
-                    tifffile.imwrite(file_path, final_rgb) # Save without metadata
+                    tifffile.imwrite(file_path, final_rgb, compression='zlib')
+                    
+            elif file_path.lower().endswith('.png'):
+                final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
+                # Enforce maximum, lossless PNG compression to maintain high-res detail
+                cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
+                
             else:
                 final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
-                cv2.imwrite(file_path, final_bgr) 
+                # If saving as JPEG, maximize quality to 100% to minimize artifacts
+                cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
                 
         except Exception as e:
             import traceback
             traceback.print_exc()
             messagebox.showerror("Save Error", f"Failed to save image:\n{e}")
+            
