@@ -181,36 +181,28 @@ class QuantificationTab(ttk.Frame):
         self.pan_y = 0.0
         # -------------------------------------------------------
 
-        # Nav
+        # --- Nav (UPDATED WITH VARIABLE POINTERS AND STATUS LABELS) ---
         nav_frame = tk.Frame(root_frame, pady=10)
         nav_frame.pack(fill=tk.X, padx=10)
         
-        tk.Button(nav_frame, text="<< Prev", command=self.prev_image, font=("Arial", 10)).pack(side=tk.LEFT)
+        # FIXED: Saved explicitly to instance variable self.btn_prev_img
+        self.btn_prev_img = tk.Button(nav_frame, text="<< Prev", command=self.prev_image, font=("Arial", 10))
+        self.btn_prev_img.pack(side=tk.LEFT)
         
         stats_frame = tk.Frame(nav_frame)
-        stats_frame.pack(side=tk.LEFT, expand=True)
+        stats_frame.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        
         self.lbl_stats_integrated = tk.Label(stats_frame, text="", font=("Arial", 11, "bold"))
         self.lbl_stats_integrated.pack()
-
-        tk.Button(nav_frame, text="Next >>", command=self.next_image, font=("Arial", 10)).pack(side=tk.RIGHT)
-
-        # --- Global Keyboard Bindings for Tab 2 ---
-        top = self.winfo_toplevel()
         
-        # Left/Right Arrows for Prev/Next File Navigation
-        top.bind("<Left>", lambda e: self.prev_image() if self.winfo_ismapped() else None, add="+")
-        top.bind("<Right>", lambda e: self.next_image() if self.winfo_ismapped() else None, add="+")
-        
-        # Ctrl+O for Open/Select Images File browser
-        top.bind("<Control-o>", lambda e: self.load_files() if self.winfo_ismapped() else None, add="+")
-        top.bind("<Control-O>", lambda e: self.load_files() if self.winfo_ismapped() else None, add="+")
+        # ---> NEW: Image Index Tracker Layout Element for clean navigation <---
+        self.lbl_img_count = tk.Label(stats_frame, text="0 / 0", font=("Arial", 10, "italic"), fg="gray")
+        self.lbl_img_count.pack()
 
-        # --- NEW: Ctrl+Z and Ctrl+Y Hotkey Listeners ---
-        # Intercepts keyboard events and routes them to undo/redo systems safely if this tab is visible
-        top.bind("<Control-z>", lambda e: self.undo_action() if self.winfo_ismapped() else None, add="+")
-        top.bind("<Control-Z>", lambda e: self.undo_action() if self.winfo_ismapped() else None, add="+")
-        top.bind("<Control-y>", lambda e: self.redo_action() if self.winfo_ismapped() else None, add="+")
-        top.bind("<Control-Y>", lambda e: self.redo_action() if self.winfo_ismapped() else None, add="+")
+        # FIXED: Saved explicitly to instance variable self.btn_next_img
+        self.btn_next_img = tk.Button(nav_frame, text="Next >>", command=self.next_image, font=("Arial", 10))
+        self.btn_next_img.pack(side=tk.RIGHT)
+
         # -------------------------------------------------------
 
     # --- Loadng ---
@@ -253,6 +245,7 @@ class QuantificationTab(ttk.Frame):
             
         # Trigger loading the first image
         self.load_current_image_data()
+        self.update_nav_button_states()
 
     def get_image_from_cache(self, path):
         """Fetches an image from memory if cached; otherwise loads it synchronously."""
@@ -1354,18 +1347,57 @@ class QuantificationTab(ttk.Frame):
         self.dropdown_window.destroy()
         self.save_presets_to_file() # <--- SAVES TO FILE
     
-    # --- Image Switching ---
+   # --- Image Switching ---
     def next_image(self):
         self.current_mask = None
         if self.current_index < len(self.image_states) - 1:
             self.current_index += 1
+            
+            # ---> FIX 1: Manage background RAM thread prefetches
+            if hasattr(self, 'manage_cache_pipeline'):
+                self.manage_cache_pipeline()
+                
             self.load_current_image_data()
+            
+            # ---> FIX 2: Refresh UI Button States so they remain active/clickable
+            self.update_nav_button_states()
 
     def prev_image(self):
         self.current_mask = None
         if self.current_index > 0:
             self.current_index -= 1
+            
+            # ---> FIX 1: Manage background RAM thread prefetches
+            if hasattr(self, 'manage_cache_pipeline'):
+                self.manage_cache_pipeline()
+                
             self.load_current_image_data()
+            
+            # ---> FIX 2: Refresh UI Button States so they remain active/clickable
+            self.update_nav_button_states()
+
+    def update_nav_button_states(self):
+        """Helper to safely toggle button availability based on array limits."""
+        if not hasattr(self, 'image_states') or not self.image_states:
+            if hasattr(self, 'btn_prev_img'): self.btn_prev_img.config(state=tk.DISABLED)
+            if hasattr(self, 'btn_next_img'): self.btn_next_img.config(state=tk.DISABLED)
+            return
+
+        # Handle Previous Button state
+        if self.current_index > 0:
+            self.btn_prev_img.config(state=tk.NORMAL)
+        else:
+            self.btn_prev_img.config(state=tk.DISABLED)
+
+        # Handle Next Button state
+        if self.current_index < len(self.image_states) - 1:
+            self.btn_next_img.config(state=tk.NORMAL)
+        else:
+            self.btn_next_img.config(state=tk.DISABLED)
+            
+        # Update text string label readout layer safely
+        if hasattr(self, 'lbl_img_count'):
+            self.lbl_img_count.config(text=f"Image {self.current_index + 1} of {len(self.image_states)}")
 
     # --- Export Data ---
     def export_excel(self):
