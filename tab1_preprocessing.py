@@ -264,10 +264,10 @@ class PreProcessingTab(ttk.Frame):
         self.canvas.bind("<Double-Button-1>", self.reset_view_layout)       # Center Image to the Window with Double Click
 
 
-        # --- Keyboard bindings for Left/Right arrows ---
-        top = self.winfo_toplevel()
-        top.bind("<Left>", lambda e: self.prev_image() if self.btn_prev_img['state'] == tk.NORMAL else None)
-        top.bind("<Right>", lambda e: self.next_image() if self.btn_next_img['state'] == tk.NORMAL else None)
+        # # --- Keyboard bindings for Left/Right arrows ---
+        # top = self.winfo_toplevel()
+        # top.bind("<Left>", lambda e: self.prev_image() if self.btn_prev_img['state'] == tk.NORMAL else None)
+        # top.bind("<Right>", lambda e: self.next_image() if self.btn_next_img['state'] == tk.NORMAL else None)
 
 # --- Preview zoom and pan ---
     def on_zoom(self, event):
@@ -357,7 +357,6 @@ class PreProcessingTab(ttk.Frame):
         self.img_y = self.img_offset_y
         
         self.redraw_image()
-
 
     def on_pan_start(self, event):
         """Initializes coordinates for drag-panning and changes cursor shape."""
@@ -1232,6 +1231,22 @@ class PreProcessingTab(ttk.Frame):
         # 4. Safe clip and cast to 8-bit image array
         return np.clip(blended, 0, 255).astype(np.uint8)
 
+    def change_z_slice(self, direction):
+        """Moves the Z-stack index up or down by 1 slice."""
+        if self.raw_volume is None or self.is_merged_preview:
+            return  # Skip navigation if no file is loaded or if previewing a merge
+            
+        current_val = self.scale_z.get()
+        # Move up (+1) or down (-1)
+        new_val = current_val + direction
+        
+        # Check boundary limits based on self.max_z
+        max_z_limit = getattr(self, 'max_z', len(self.raw_volume) - 1)
+        
+        if 0 <= new_val <= max_z_limit:
+            self.scale_z.set(new_val)      # Visually moves the slider layout handle
+            self.update_preview()          # Reloads data, changes text, updates canvas
+
     def on_z_slider_move(self, val=None):
         """Interrupts the Z-slider to break out of merge mode if it's active."""
         if getattr(self, 'is_merged_preview', False):
@@ -1438,4 +1453,3 @@ class PreProcessingTab(ttk.Frame):
             import traceback
             traceback.print_exc()
             messagebox.showerror("Save Error", f"Failed to save image:\n{e}")
-            
