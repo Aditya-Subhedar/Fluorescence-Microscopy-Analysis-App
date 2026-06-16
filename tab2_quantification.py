@@ -86,8 +86,8 @@ class QuantificationTab(ttk.Frame):
         tool_frame.pack(side=tk.LEFT, padx=10)
         tk.Label(tool_frame, text="Tools:", font=("Arial", 8)).pack(side=tk.LEFT)
         
-        self.btn_pencil = tk.Button(tool_frame, text="✏️", relief=tk.SUNKEN, bg="lightgray", command=lambda: self.set_draw_mode("pencil"))
-        self.btn_pencil.pack(side=tk.LEFT, padx=2)
+        self.btn_pencil = tk.Button(tool_frame, text="✏️", relief=tk.RAISED, command=lambda: self.set_draw_mode("pencil"))
+        self.btn_pencil.pack(side=tk.LEFT, padx=1)
 
         self.btn_circle = tk.Button(tool_frame, text="⭕", width=3, command=lambda: self.set_draw_mode("circle"), font=("Arial", 10, "bold"))
         self.btn_circle.pack(side=tk.LEFT, padx=1)
@@ -664,25 +664,28 @@ class QuantificationTab(ttk.Frame):
             mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
             
             # ---> 2. DYNAMIC FIBER STRIPPING (MORPHOLOGICAL OPENING) <---
-            # We use the minimum handle of the Circularity slider to dictate how aggressively 
-            # we shrink the shape inwards to snap off fibers.
             circ_min = state.get('circ_min', 0)
             if circ_min > 0:
-                # Map the 0-100 slider to a kernel size from 1 to 41 pixels
                 k_size = int((circ_min / 100.0) * 20) * 2 + 1 
                 if k_size > 1:
                     dynamic_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
-                    # Erode to snap fibers, Dilate to restore main cell mass
                     mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_OPEN, dynamic_kernel)
             
             mask_final_uint8 = np.uint8(mask_clean)
             
+            # ---> NEW: Initialise a permanent eraser tracking mask matching the image dimensions <---
+            if not hasattr(self, 'eraser_permanent_mask') or self.eraser_permanent_mask is None:
+                self.eraser_permanent_mask = np.zeros_like(mask_final_uint8)
+            
+            # Combine the slider thresholds and manual pencil drawings
             mask_combined = cv2.bitwise_or(mask_final_uint8, self.current_manual_add)
+            
+            # ---> FIXED: Subtract BOTH the persistent cuts AND the active temporary dragging strokes <---
+            mask_combined = cv2.bitwise_and(mask_combined, cv2.bitwise_not(self.eraser_permanent_mask))
             mask_combined = cv2.bitwise_and(mask_combined, cv2.bitwise_not(self.current_manual_remove))
             
             labeled_mask, _ = measure.label(mask_combined > 0, return_num=True)
             regions = measure.regionprops(labeled_mask, intensity_image=self.cached_gray)
-            
 
             valid_labels = []
             valid_regions = []
@@ -738,15 +741,21 @@ class QuantificationTab(ttk.Frame):
             self.current_mask = None
             self.lbl_stats_integrated.config(text=f"{file_meta}\nView: Original Image (Auto Detect OFF)")
 
+        # ---> THE TEMPORARY RED BORDER GUIDE (WHILE DRAGGING) <---
         if self.current_manual_remove is not None and np.any(self.current_manual_remove > 0):
-            red_layer = overlay_rgb.copy()
-            red_layer[self.current_manual_remove > 0] = [255, 0, 0]
-            cv2.addWeighted(red_layer, 0.35, overlay_rgb, 0.65, 0, overlay_rgb) 
+            rem_contours, _ = cv2.findContours(self.current_manual_remove, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            red_border_overlay = overlay_rgb.copy()
+            # Draws a hollow red outline (255, 0, 0) with a thickness of 2
+            cv2.drawContours(red_border_overlay, rem_contours, -1, (255, 0, 0), 2)
+            cv2.addWeighted(red_border_overlay, 0.80, overlay_rgb, 0.20, 0, overlay_rgb)
 
+        # ---> PENCIL & CIRCLE BORDERS (White Only, Transparent Inside) <---
         if self.current_manual_add is not None and np.any(self.current_manual_add > 0):
-            green_layer = overlay_rgb.copy()
-            green_layer[self.current_manual_add > 0] = [0, 150, 0]
-            cv2.addWeighted(green_layer, 0.35, overlay_rgb, 0.65, 0, overlay_rgb) 
+            add_contours, _ = cv2.findContours(self.current_manual_add, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            white_border_overlay = overlay_rgb.copy()
+            cv2.drawContours(white_border_overlay, add_contours, -1, (255, 255, 255), 2)
+            cv2.addWeighted(white_border_overlay, 0.80, overlay_rgb, 0.20, 0, overlay_rgb) 
+
 
         canvas_w = self.canvas.winfo_width()
         canvas_h = self.canvas.winfo_height()
@@ -989,12 +998,21 @@ class QuantificationTab(ttk.Frame):
                 self.auto_detect_enabled = True
                 self.btn_auto.config(text="Auto Detect: ON", fg="white")
                 
-            color = "white"
+            color = "red" if self.draw_mode == "eraser" else "white"
             self.canvas.create_line(self.last_x, self.last_y, event.x, event.y, fill=color, width=2, capstyle=tk.ROUND)
             
             orig_x = int((canvas_x - getattr(self, 'offset_x', 0)) * getattr(self, 'scale_x', 1.0))
             orig_y = int((canvas_y - getattr(self, 'offset_y', 0)) * getattr(self, 'scale_y', 1.0))
             self.draw_points_img.append((orig_x, orig_y))
+            
+            # ---> NEW: Feed the eraser preview matrix dynamically as you drag <---
+            if self.draw_mode == "eraser" and self.current_manual_remove is not None:
+                if len(self.draw_points_img) > 1:
+                    # Adjust thickness=8 if you want a wider eraser tool stroke
+                    cv2.line(self.current_manual_remove, self.draw_points_img[-2], self.draw_points_img[-1], 255, thickness=8)
+                    # Trigger process_image so the red outline updates live during mouse drag
+                    self.process_image()
+
             self.last_x, self.last_y = event.x, event.y
             
         # Case C: Dynamic circle initial shape stretching drag operations
@@ -1011,20 +1029,48 @@ class QuantificationTab(ttk.Frame):
         # Case A: Handle standard pencil/eraser mask baking loops
         if self.draw_mode in ("pencil", "eraser") and getattr(self, 'is_drawing', False):
             self.is_drawing = False
-            mask = self.current_manual_add if self.draw_mode == "pencil" else self.current_manual_remove
             
-            if mask is not None and hasattr(self, 'draw_points_img') and len(self.draw_points_img) > 0:
-                if len(self.draw_points_img) > 2:
-                    pts = np.array([self.draw_points_img], dtype=np.int32)
-                    cv2.fillPoly(mask, pts, 255)
-                else:
-                    dynamic_radius = max(2, int(15 / getattr(self, 'zoom_factor', 1.0)))
-                    cv2.circle(mask, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
+            if hasattr(self, 'draw_points_img') and len(self.draw_points_img) > 0:
+                if self.draw_mode == "pencil":
+                    if self.current_manual_add is not None:
+                        if len(self.draw_points_img) > 2:
+                            pts = np.array([self.draw_points_img], dtype=np.int32)
+                            cv2.fillPoly(self.current_manual_add, pts, 255)
+                        else:
+                            dynamic_radius = max(2, int(15 / getattr(self, 'zoom_factor', 1.0)))
+                            cv2.circle(self.current_manual_add, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
+                
+                elif self.draw_mode == "eraser":
+                    # Initialise our permanent eraser mask if it hasn't been instantiated yet
+                    if not hasattr(self, 'eraser_permanent_mask') or self.eraser_permanent_mask is None:
+                        if self.current_manual_remove is not None:
+                            self.eraser_permanent_mask = np.zeros_like(self.current_manual_remove)
+                    
+                    # 1. Capture the exact shape footprint of the eraser movement points list
+                    eraser_temp = np.zeros_like(self.current_manual_remove)
+                    if len(self.draw_points_img) > 2:
+                        pts = np.array([self.draw_points_img], dtype=np.int32)
+                        cv2.fillPoly(eraser_temp, pts, 255)
+                        if self.eraser_permanent_mask is not None:
+                            cv2.fillPoly(self.eraser_permanent_mask, pts, 255)
+                    else:
+                        dynamic_radius = max(2, int(15 / getattr(self, 'zoom_factor', 1.0)))
+                        cv2.circle(eraser_temp, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
+                        if self.eraser_permanent_mask is not None:
+                            cv2.circle(self.eraser_permanent_mask, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
+                    
+                    # 2. Clean out manually drawn pencil contours sitting beneath the eraser path
+                    if self.current_manual_add is not None:
+                        self.current_manual_add[eraser_temp > 0] = 0
+                    
+                    # 3. Clear the active visual layer completely so the red border instantly vanishes
+                    if self.current_manual_remove is not None:
+                        self.current_manual_remove.fill(0)
                     
             self.draw_points_img = [] 
             self.process_image()
             
-        # Case B: Circle tool mouse release - Lock initial size and spawn micro-handles
+        # Case B: Circle tool mouse release
         elif self.draw_mode == "circle":
             if getattr(self, 'active_handle', None):
                 self.active_handle = None 
