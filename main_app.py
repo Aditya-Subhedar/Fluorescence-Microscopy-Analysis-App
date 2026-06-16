@@ -22,7 +22,7 @@ from tab6_oft_tracking import OFTTrackingTab
 class CytoQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CytoQuant Version 22")
+        self.root.title("CytoQuant Version 23")
         self.root.geometry("1920x1080")
 
         # Load Icon
@@ -76,6 +76,12 @@ class CytoQuantApp:
         # ---> NEW: CENTRAL UP / DOWN ARROW BINDINGS FOR Z-STACKS <---
         self.root.bind("<Up>", self.route_up_arrow)
         self.root.bind("<Down>", self.route_down_arrow)
+
+        # ---> NEW: CENTRAL COPY / PASTE BINDINGS <---
+        self.root.bind("<Control-c>", self.route_copy_box)
+        self.root.bind("<Control-C>", self.route_copy_box)
+        self.root.bind("<Control-v>", self.route_paste_box)
+        self.root.bind("<Control-V>", self.route_paste_box)
 
         # 2. Watch for tab switches to shift focus dynamically
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_switched)
@@ -159,6 +165,21 @@ class CytoQuantApp:
                 self.tab1.change_z_slice(-1) # -1 moves down the stack
         return "break"  # Stops default widget scrolling overrides
 
+    def route_copy_box(self, event=None):
+        """Intercepts Ctrl+C and routes to Tab 4 copy function."""
+        active_idx = self.notebook.index(self.notebook.select())
+        if active_idx == 3:  # Tab 4 (Panel Creation) is index 3
+            if hasattr(self.tab4, 'copy_selected_box'):
+                self.tab4.copy_selected_box()
+        return "break"
+
+    def route_paste_box(self, event=None):
+        """Intercepts Ctrl+V and routes to Tab 4 paste function."""
+        active_idx = self.notebook.index(self.notebook.select())
+        if active_idx == 3:  # Tab 4 (Panel Creation) is index 3
+            if hasattr(self.tab4, 'paste_box'):
+                self.tab4.paste_box()
+        return "break"
 
 if __name__ == "__main__":
     root = tk.Tk()
