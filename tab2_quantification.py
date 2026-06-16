@@ -342,15 +342,23 @@ class QuantificationTab(ttk.Frame):
                     
             if img is None: return None
             
-            # Normalize 16-bit or 32-bit scientific images down to standard 8-bit array
-            if img.dtype != np.uint8:
-                img = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
+            # --- FIX: Only normalize raw scientific formats. Leave Tab 1 standard images alone! ---
+            if img.dtype == np.uint16 or img.dtype == np.float32 or img.dtype == np.int32:
+                img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
+                img = np.uint8(img)
+            elif img.dtype != np.uint8:
+                img = np.uint8(img) # Simple type cast without crushing contrast
+                
+            # If loaded with an alpha channel (RGBA), drop it to preserve crisp RGB details
+            if len(img.shape) == 3 and img.shape[2] == 4:
+                img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
             
-            # Handle grayscale images by converting them to standard RGB matrices
+            # Handle grayscale images safely
             if len(img.shape) == 2:
                 img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
                 
             return img
+        
         except Exception as e:
             import threading
             if threading.current_thread() == threading.main_thread():
@@ -780,7 +788,7 @@ class QuantificationTab(ttk.Frame):
         # Trigger the lightweight drawing function
         self.fast_redraw()
 
-    # --- Scale Bar (Remove) ---
+    
     def fast_redraw(self):
         if not hasattr(self, 'base_pil_image'): return
         
@@ -791,7 +799,10 @@ class QuantificationTab(ttk.Frame):
         zoomed_w = max(1, int(self.base_w * zoom))
         zoomed_h = max(1, int(self.base_h * zoom))
         
-        resample_method = Image.Resampling.NEAREST if zoom >= 2.0 else Image.Resampling.BILINEAR
+        # ---> THE CRITICAL FIX: Use LANCZOS when zoom < 2.0 for maximum sharpness <---
+        # NEAREST is perfect for zoomed-in inspection (prevents fuzziness at high zoom)
+        # LANCZOS is perfect for normal/zoomed-out views (stops downsampling blur)
+        resample_method = Image.Resampling.NEAREST if zoom >= 2.0 else Image.Resampling.LANCZOS
         zoomed_img = self.base_pil_image.resize((zoomed_w, zoomed_h), resample_method)
         
         self.tk_img = ImageTk.PhotoImage(zoomed_img)
