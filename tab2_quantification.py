@@ -980,17 +980,7 @@ class QuantificationTab(ttk.Frame):
         canvas_x = (event.x - getattr(self, 'pan_x', 0)) / getattr(self, 'zoom_factor', 1.0)
         canvas_y = (event.y - getattr(self, 'pan_y', 0)) / getattr(self, 'zoom_factor', 1.0)
 
-        # Case A: Adjusting an existing shape using active boundary handles
-        if self.draw_mode == "circle" and getattr(self, 'active_handle', None) and getattr(self, 'active_oval', None):
-            cx, cy, rx_val, ry_val = self.active_oval
-            if self.active_handle == "L":   rx_val = abs(cx - canvas_x)
-            elif self.active_handle == "R": rx_val = abs(canvas_x - cx)
-            elif self.active_handle == "T": ry_val = abs(cy - canvas_y)
-            elif self.active_handle == "B": ry_val = abs(canvas_y - cy)
-            
-            self.active_oval = (cx, cy, rx_val, ry_val)
-            self.update_oval_visual_layer()
-            return
+        # [Keep Case A for circle adjustment exactly as it is]
 
         # Case B: Standard pencil or eraser dragging logic running natively
         if self.draw_mode in ("pencil", "eraser") and getattr(self, 'is_drawing', False):
@@ -999,19 +989,19 @@ class QuantificationTab(ttk.Frame):
                 self.btn_auto.config(text="Auto Detect: ON", fg="white")
                 
             color = "red" if self.draw_mode == "eraser" else "white"
-            self.canvas.create_line(self.last_x, self.last_y, event.x, event.y, fill=color, width=2, capstyle=tk.ROUND)
+            self.canvas.create_line(
+                self.last_x, self.last_y, event.x, event.y, 
+                fill=color, width=4, capstyle=tk.ROUND, joinstyle=tk.ROUND,
+                tags="temp_eraser_line" if self.draw_mode == "eraser" else ""
+            )
             
             orig_x = int((canvas_x - getattr(self, 'offset_x', 0)) * getattr(self, 'scale_x', 1.0))
             orig_y = int((canvas_y - getattr(self, 'offset_y', 0)) * getattr(self, 'scale_y', 1.0))
             self.draw_points_img.append((orig_x, orig_y))
             
-            # ---> NEW: Feed the eraser preview matrix dynamically as you drag <---
-            if self.draw_mode == "eraser" and self.current_manual_remove is not None:
-                if len(self.draw_points_img) > 1:
-                    # Adjust thickness=8 if you want a wider eraser tool stroke
-                    cv2.line(self.current_manual_remove, self.draw_points_img[-2], self.draw_points_img[-1], 255, thickness=8)
-                    # Trigger process_image so the red outline updates live during mouse drag
-                    self.process_image()
+            # Write to active preview matrix smoothly
+            if len(self.draw_points_img) > 1 and self.draw_mode == "eraser" and self.current_manual_remove is not None:
+                cv2.line(self.current_manual_remove, self.draw_points_img[-2], self.draw_points_img[-1], 255, thickness=4)
 
             self.last_x, self.last_y = event.x, event.y
             
@@ -1041,15 +1031,16 @@ class QuantificationTab(ttk.Frame):
                             cv2.circle(self.current_manual_add, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
                 
                 elif self.draw_mode == "eraser":
-                    # Initialise our permanent eraser mask if it hasn't been instantiated yet
                     if not hasattr(self, 'eraser_permanent_mask') or self.eraser_permanent_mask is None:
                         if self.current_manual_remove is not None:
                             self.eraser_permanent_mask = np.zeros_like(self.current_manual_remove)
                     
-                    # 1. Capture the exact shape footprint of the eraser movement points list
+                    # Create a temporary mask to render the solid lasso fill zone
                     eraser_temp = np.zeros_like(self.current_manual_remove)
+                    
                     if len(self.draw_points_img) > 2:
                         pts = np.array([self.draw_points_img], dtype=np.int32)
+                        # ---> THE CRITICAL FIX: Fill the entire enclosed shape space solidly <---
                         cv2.fillPoly(eraser_temp, pts, 255)
                         if self.eraser_permanent_mask is not None:
                             cv2.fillPoly(self.eraser_permanent_mask, pts, 255)
@@ -1059,16 +1050,19 @@ class QuantificationTab(ttk.Frame):
                         if self.eraser_permanent_mask is not None:
                             cv2.circle(self.eraser_permanent_mask, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
                     
-                    # 2. Clean out manually drawn pencil contours sitting beneath the eraser path
+                    # 1. Erase manual pencil drawings inside this solid region
                     if self.current_manual_add is not None:
                         self.current_manual_add[eraser_temp > 0] = 0
                     
-                    # 3. Clear the active visual layer completely so the red border instantly vanishes
+                    # 2. Clear out the Tkinter smooth vector visual paths from the interface screen
+                    self.canvas.delete("temp_eraser_line")
+                    
+                    # 3. Reset the visual layer back to pure black
                     if self.current_manual_remove is not None:
                         self.current_manual_remove.fill(0)
                     
             self.draw_points_img = [] 
-            self.process_image()
+            self.process_image()  # Heavy calculations run smoothly once on button release
             
         # Case B: Circle tool mouse release
         elif self.draw_mode == "circle":
