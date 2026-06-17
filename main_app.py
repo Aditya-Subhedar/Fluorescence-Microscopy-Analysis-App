@@ -83,6 +83,10 @@ class CytoQuantApp:
         self.root.bind("<Control-v>", self.route_paste_box)
         self.root.bind("<Control-V>", self.route_paste_box)
 
+        # ---> CENTRAL DELETE BINDING <---
+        self.root.bind("<Delete>", self.route_delete_item)
+        self.root.bind("<BackSpace>", self.route_delete_item)
+
         # 2. Watch for tab switches to shift focus dynamically
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_switched)
 
@@ -134,20 +138,22 @@ class CytoQuantApp:
                     self.tab2.next_image()
 
     def route_undo(self, event=None):
-        """Intercepts Ctrl+Z and safely triggers Tab 2 manual drawing undo."""
+        """Intercepts Ctrl+Z and safely triggers undo for active tabs."""
         active_idx = self.notebook.index(self.notebook.select())
-        if active_idx == 1: # Tab 2 is index 1
-            if hasattr(self.tab2, 'undo_action'):
-                self.tab2.undo_action()
-        return "break" # Prevents default OS textbox overrides
+        if active_idx == 1: # Tab 2
+            if hasattr(self.tab2, 'undo_action'): self.tab2.undo_action()
+        elif active_idx == 3: # Tab 4
+            if hasattr(self.tab4, 'undo_action'): self.tab4.undo_action()
+        return "break"
 
     def route_redo(self, event=None):
-        """Intercepts Ctrl+Y and safely triggers Tab 2 manual drawing redo."""
+        """Intercepts Ctrl+Y and safely triggers redo for active tabs."""
         active_idx = self.notebook.index(self.notebook.select())
-        if active_idx == 1: # Tab 2 is index 1
-            if hasattr(self.tab2, 'redo_action'):
-                self.tab2.redo_action()
-        return "break" # Prevents default OS textbox overrides
+        if active_idx == 1: # Tab 2
+            if hasattr(self.tab2, 'redo_action'): self.tab2.redo_action()
+        elif active_idx == 3: # Tab 4
+            if hasattr(self.tab4, 'redo_action'): self.tab4.redo_action()
+        return "break"
     
     def route_up_arrow(self, event=None):
         """Intercepts Up Arrow and moves up 1 slice in Tab 1 Z-stack."""
@@ -179,6 +185,15 @@ class CytoQuantApp:
         if active_idx == 3:  # Tab 4 (Panel Creation) is index 3
             if hasattr(self.tab4, 'paste_box'):
                 self.tab4.paste_box()
+        return "break"
+
+    def route_delete_item(self, event=None):
+        # Ensure we are checking for index 3 (the 4th tab)
+        active_idx = self.notebook.index(self.notebook.select())
+        if active_idx == 3:
+            # Check that tab4 exists and has the required method
+            if hasattr(self.tab4, 'delete_selected_item'):
+                self.tab4.delete_selected_item()
         return "break"
 
 if __name__ == "__main__":
