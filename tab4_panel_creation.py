@@ -569,15 +569,22 @@ class PanelCreationTab(ttk.Frame):
         paths = filedialog.askopenfilenames(title=f"Select Image(s) for Row {r+1}", filetypes=f_types)
         if not paths: return
         
-        # REMOVED sorted() here to preserve your click-selection order
         self.save_selection_state()
+        
         cols = self.grid_dims[1]
         c = 0
-        for path in paths: # Process in the order provided by the OS/Explorer
-            if c >= cols: break
+        
+        for path in paths:
+            if c >= cols: 
+                break
+            
             self.cell_images[(r, c)] = path
-            if (r, c) not in self.cell_rotations: self.cell_rotations[(r, c)] = 0
+            if (r, c) not in self.cell_rotations:
+                self.cell_rotations[(r, c)] = 0
+            
             c += 1
+            
+        self.cell_aspect_ratio = self.get_cell_aspect()
         self.generate_canvas_placeholders()
 
     def select_images_for_col(self, c):
@@ -585,15 +592,22 @@ class PanelCreationTab(ttk.Frame):
         paths = filedialog.askopenfilenames(title=f"Select Image(s) for Col {c+1}", filetypes=f_types)
         if not paths: return
         
-        # REMOVED sorted() here to preserve your click-selection order
         self.save_selection_state()
+        
         rows = self.grid_dims[0]
         r = 0
-        for path in paths: # Process in the order provided by the OS/Explorer
-            if r >= rows: break
+        
+        for path in paths:
+            if r >= rows: 
+                break
+            
             self.cell_images[(r, c)] = path
-            if (r, c) not in self.cell_rotations: self.cell_rotations[(r, c)] = 0
+            if (r, c) not in self.cell_rotations:
+                self.cell_rotations[(r, c)] = 0
+            
             r += 1
+            
+        self.cell_aspect_ratio = self.get_cell_aspect()
         self.generate_canvas_placeholders()
 
     def draw_cell_thumbnail(self, r, c, x1, y1, x2, y2, path):
