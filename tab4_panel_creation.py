@@ -1,8 +1,9 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, colorchooser
+from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import os
 import copy
+import math
 
 class PanelCreationTab(ttk.Frame):
     def __init__(self, parent, main_app=None):
@@ -10,13 +11,10 @@ class PanelCreationTab(ttk.Frame):
         self.main_app = main_app
         
         # State Data
-        self.cell_images = {}      # key: (row, col), value: absolute filepath
-        self.cell_rotations = {}   # key: (row, col), value: degrees (0, 90, 180, 270)
+        self.cell_images = {}      
+        self.cell_rotations = {}   
         self.grid_dims = (2, 2)
         self.cell_aspect_ratio = 1.0  
-        # --- Bounding Box & Viewport State ---
-        self.panel_boxes = []         # List of dicts: {'x1', 'y1', 'x2', 'y2', 'color', 'scalable'}
-        self.clipboard_box = None     # NEW: Stores copied box
         
         # Previews
         self.composite_pil = None  
@@ -31,11 +29,13 @@ class PanelCreationTab(ttk.Frame):
         self.undo_stack = [{'images': {}, 'rotations': {}}]
         self.redo_stack = []
 
-        # --- Bounding Box & Viewport State ---
-        self.panel_boxes = []         # List of dicts: {'x1', 'y1', 'x2', 'y2', 'color'}
-        self.selected_box_idx = None
-        self.interaction_state = "IDLE" # IDLE, DRAWING, DRAGGING, RESIZING
-        self.resize_handle = None       # top_left, top, right, etc.
+        # --- Annotations & Viewport State ---
+        # Annotations format: {'type': 'box'|'arrow'|'text', 'x1', 'y1', 'x2', 'y2', 'scalable', 'text', 'color'}
+        self.annotations = []         
+        self.selected_item_idx = None
+        self.clipboard_item = None
+        self.interaction_state = "IDLE" 
+        self.resize_handle = None       
         
         # Viewport parameters
         self.view_scale = 1.0
@@ -43,10 +43,9 @@ class PanelCreationTab(ttk.Frame):
         self.pan_y = 0
         self.start_x = 0
         self.start_y = 0
-        self.drag_start_box = None
+        self.drag_start_item = None
 
         self.setup_ui()
-        self.setup_keybindings()
 
     def setup_ui(self):
         root_frame = tk.Frame(self)
@@ -116,9 +115,8 @@ class PanelCreationTab(ttk.Frame):
 
         # 3. Text & Font Settings
         font_frame = tk.LabelFrame(left_panel, text="🎨 Font Settings", padx=5, pady=5)
-        font_frame.pack(fill=tk.X, pady=(0, 15))
+        font_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # New Font Family Selection
         font_family_frame = tk.Frame(font_frame)
         font_family_frame.pack(fill=tk.X, pady=2)
         tk.Label(font_family_frame, text="Font Family:").pack(side=tk.LEFT)
@@ -140,28 +138,38 @@ class PanelCreationTab(ttk.Frame):
         tk.Label(grid_sizer, text="Label Size (px):").grid(row=0, column=0, sticky=tk.W)
         self.spin_sublabel_size = tk.Spinbox(grid_sizer, from_=10, to=500, increment=10, width=5)
         self.spin_sublabel_size.grid(row=0, column=1)
-        self.spin_sublabel_size.delete(0, tk.END); self.spin_sublabel_size.insert(0, "48")
+        self.spin_sublabel_size.delete(0, tk.END); self.spin_sublabel_size.insert(0, "100")
         
         tk.Label(grid_sizer, text="Title Size (px):").grid(row=1, column=0, sticky=tk.W)
         self.spin_title_size = tk.Spinbox(grid_sizer, from_=10, to=500, increment=10, width=5)
         self.spin_title_size.grid(row=1, column=1)
-        self.spin_title_size.delete(0, tk.END); self.spin_title_size.insert(0, "56")
+        self.spin_title_size.delete(0, tk.END); self.spin_title_size.insert(0, "100")
 
-        # Box Options
-        box_frame = tk.Frame(left_panel)
-        box_frame.pack(fill=tk.X, pady=5)
-        tk.Button(box_frame, text="🗑 Delete Selected Box", command=self.delete_selected_box, bg="#d32f2f", fg="white").pack(fill=tk.X)
+        # --- NEW: Annotation Toolbar (3x1) ---
+        tools_frame = tk.LabelFrame(left_panel, text="🛠 Annotation Tools", padx=5, pady=5)
+        tools_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        # Default tool is 'select' (empty string or custom), 
+        # but we use 'box', 'arrow', 'text' as triggers.
+        self.tool_var = tk.StringVar(value="select")
+        
+        btn_row = tk.Frame(tools_frame)
+        btn_row.pack(fill=tk.X)
+        
+        tk.Radiobutton(btn_row, text="🔲 Box", variable=self.tool_var, value="box", indicatoron=0, width=8).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        tk.Radiobutton(btn_row, text="↗ Arrow", variable=self.tool_var, value="arrow", indicatoron=0, width=8).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        tk.Radiobutton(btn_row, text="🔤 Text", variable=self.tool_var, value="text", indicatoron=0, width=8).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        
+        # Helper to reset to select mode after action
+        def reset_tool(): self.tool_var.set("select")
+        # You can bind these to the buttons if desired, or handle in on_left_up
         
         # 4. Global Actions / Export
         tk.Button(left_panel, text="🔄 Build / Refresh Preview", command=self.action_build_composite, bg="#1976d2", fg="white", font=("Arial", 9, "bold")).pack(fill=tk.X, pady=(10, 5))
         
         export_frame = tk.Frame(left_panel)
-        export_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=5)
+        export_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=0)
         
-        undo_redo_row = tk.Frame(export_frame)
-        undo_redo_row.pack(fill=tk.X, pady=2)
-        tk.Button(undo_redo_row, text="↩️ Undo Sel.", command=self.undo, width=10).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        tk.Button(undo_redo_row, text="↪️ Redo Sel.", command=self.redo, width=10).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         tk.Button(
             export_frame, text="💾 Export Panel High-Res", 
@@ -185,15 +193,6 @@ class PanelCreationTab(ttk.Frame):
         self.canvas.bind("<ButtonPress-1>", self.on_left_down)
         self.canvas.bind("<B1-Motion>", self.on_left_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_left_up)
-
-    def setup_keybindings(self):
-        toplevel = self.winfo_toplevel()
-        toplevel.bind("<Control-z>", self.undo)
-        toplevel.bind("<Control-y>", self.redo)
-        toplevel.bind("<Control-s>", self.action_export_panel)
-        toplevel.bind("<Control-g>", self.action_generate_grid)
-        toplevel.bind("<Delete>", lambda e: self.delete_selected_box())
-        toplevel.bind("<BackSpace>", lambda e: self.delete_selected_box())
 
     # --- MATH & COORDINATE CONVERSION ---
     def screen_to_img(self, sx, sy):
@@ -233,9 +232,9 @@ class PanelCreationTab(ttk.Frame):
         self.canvas.coords("bg", self.pan_x, self.pan_y)
         self.draw_interactive_elements()
         
-    def get_handle_rects(self, box):
-        x1, y1 = self.img_to_screen(box['x1'], box['y1'])
-        x2, y2 = self.img_to_screen(box['x2'], box['y2'])
+    def get_handle_rects(self, item):
+        x1, y1 = self.img_to_screen(item['x1'], item['y1'])
+        x2, y2 = self.img_to_screen(item['x2'], item['y2'])
         hw = 5 
         cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
         return {
@@ -253,108 +252,130 @@ class PanelCreationTab(ttk.Frame):
         if not self.composite_pil: return
         self.start_x, self.start_y = self.screen_to_img(event.x, event.y)
         
-        if self.selected_box_idx is not None:
-            box = self.panel_boxes[self.selected_box_idx]
-            
-            # NEW: Only allow resizing if the box is permitted to scale
-            if box.get('scalable', True):
-                handles = self.get_handle_rects(box)
-                for handle_name, (hx1, hy1, hx2, hy2) in handles.items():
-                    if hx1 <= event.x <= hx2 and hy1 <= event.y <= hy2:
-                        self.interaction_state = "RESIZING"
-                        self.resize_handle = handle_name
-                        self.drag_start_box = copy.deepcopy(box)
-                        return
+        tool = self.tool_var.get()
+        
+        if tool == "select":
+            # 1. Check if clicking on resize handles of the currently selected item
+            if self.selected_item_idx is not None:
+                item = self.annotations[self.selected_item_idx]
+                if item.get('scalable', True):
+                    handles = self.get_handle_rects(item)
+                    for handle_name, (hx1, hy1, hx2, hy2) in handles.items():
+                        if hx1 <= event.x <= hx2 and hy1 <= event.y <= hy2:
+                            self.interaction_state = "RESIZING"
+                            self.resize_handle = handle_name
+                            self.drag_start_item = copy.deepcopy(item)
+                            return
 
-        for i, box in reversed(list(enumerate(self.panel_boxes))):
-            x1, y1 = self.img_to_screen(box['x1'], box['y1'])
-            x2, y2 = self.img_to_screen(box['x2'], box['y2'])
-            min_x, max_x = min(x1, x2), max(x1, x2)
-            min_y, max_y = min(y1, y2), max(y1, y2)
-            
-            if min_x <= event.x <= max_x and min_y <= event.y <= max_y:
-                self.selected_box_idx = i
-                self.interaction_state = "DRAGGING"
-                self.drag_start_box = copy.deepcopy(box)
-                self.draw_interactive_elements()
-                return
+            # 2. Check if clicking on an item body to drag (traverse in reverse to pick top-most)
+            for i, item in reversed(list(enumerate(self.annotations))):
+                x1, y1 = self.img_to_screen(item['x1'], item['y1'])
+                x2, y2 = self.img_to_screen(item['x2'], item['y2'])
+                
+                min_x, max_x = min(x1, x2), max(x1, x2)
+                min_y, max_y = min(y1, y2), max(y1, y2)
+                
+                if item['type'] == 'text':
+                    max_x += 80  # Generous padding for clicking text bounds
+                    max_y += 30
+                
+                if min_x <= event.x <= max_x and min_y <= event.y <= max_y:
+                    self.selected_item_idx = i
+                    self.interaction_state = "DRAGGING"
+                    self.drag_start_item = copy.deepcopy(item)
+                    self.draw_interactive_elements()
+                    return
 
-        self.selected_box_idx = None
-        self.interaction_state = "DRAWING"
-        # NEW: Ensure fresh hand-drawn boxes are explicitly marked as scalable
-        new_box = {'x1': self.start_x, 'y1': self.start_y, 'x2': self.start_x, 'y2': self.start_y, 'color': '#FFFF00', 'scalable': True}
-        self.panel_boxes.append(new_box)
-        self.selected_box_idx = len(self.panel_boxes) - 1
-        self.draw_interactive_elements()
+            # 3. Clicked empty space: deselect
+            self.selected_item_idx = None
+            self.draw_interactive_elements()
+
+        elif tool in ["box", "arrow"]:
+            self.selected_item_idx = None
+            self.interaction_state = "DRAWING"
+            new_item = {'type': tool, 'x1': self.start_x, 'y1': self.start_y, 'x2': self.start_x, 'y2': self.start_y, 'color': '#FFFF00', 'scalable': True}
+            self.annotations.append(new_item)
+            self.selected_item_idx = len(self.annotations) - 1
+            self.draw_interactive_elements()
+            
+        elif tool == "text":
+            text_val = simpledialog.askstring("Input Text", "Enter text to add to panel:")
+            if text_val:
+                new_item = {'type': 'text', 'x1': self.start_x, 'y1': self.start_y, 'x2': self.start_x+10, 'y2': self.start_y+10, 'text': text_val, 'scalable': False, 'color': '#FFFF00'}
+                self.annotations.append(new_item)
+                self.selected_item_idx = len(self.annotations) - 1
+            
+            # Auto-revert back to cursor tool immediately for text
+            self.tool_var.set("select")
+            self.draw_interactive_elements()
 
     def on_left_drag(self, event):
-        if self.interaction_state == "IDLE" or self.selected_box_idx is None: return
+        if self.interaction_state == "IDLE" or self.selected_item_idx is None: return
         
         curr_img_x, curr_img_y = self.screen_to_img(event.x, event.y)
-        box = self.panel_boxes[self.selected_box_idx]
+        item = self.annotations[self.selected_item_idx]
 
         if self.interaction_state == "DRAWING":
-            box['x2'] = curr_img_x
-            box['y2'] = curr_img_y
+            item['x2'] = curr_img_x
+            item['y2'] = curr_img_y
 
         elif self.interaction_state == "DRAGGING":
             dx = curr_img_x - self.start_x
             dy = curr_img_y - self.start_y
-            box['x1'] = self.drag_start_box['x1'] + dx
-            box['y1'] = self.drag_start_box['y1'] + dy
-            box['x2'] = self.drag_start_box['x2'] + dx
-            box['y2'] = self.drag_start_box['y2'] + dy
+            item['x1'] = self.drag_start_item['x1'] + dx
+            item['y1'] = self.drag_start_item['y1'] + dy
+            item['x2'] = self.drag_start_item['x2'] + dx
+            item['y2'] = self.drag_start_item['y2'] + dy
 
         elif self.interaction_state == "RESIZING":
-            if "left" in self.resize_handle: box['x1'] = curr_img_x
-            if "right" in self.resize_handle: box['x2'] = curr_img_x
-            if "top" in self.resize_handle: box['y1'] = curr_img_y
-            if "bottom" in self.resize_handle: box['y2'] = curr_img_y
+            if "left" in self.resize_handle: item['x1'] = curr_img_x
+            if "right" in self.resize_handle: item['x2'] = curr_img_x
+            if "top" in self.resize_handle: item['y1'] = curr_img_y
+            if "bottom" in self.resize_handle: item['y2'] = curr_img_y
 
         self.draw_interactive_elements()
 
     def on_left_up(self, event):
         self.canvas.config(cursor="")
         if self.interaction_state == "DRAWING":
-            box = self.panel_boxes[self.selected_box_idx]
-            if abs(box['x2'] - box['x1']) < 5 or abs(box['y2'] - box['y1']) < 5:
-                self.panel_boxes.pop(self.selected_box_idx)
-                self.selected_box_idx = None
+            item = self.annotations[self.selected_item_idx]
+            if abs(item['x2'] - item['x1']) < 5 and abs(item['y2'] - item['y1']) < 5:
+                self.annotations.pop(self.selected_item_idx)
+                self.selected_item_idx = None
+            
+            # Switch back to select
+            self.tool_var.set("select")
         
-        if self.selected_box_idx is not None:
-            box = self.panel_boxes[self.selected_box_idx]
-            box['x1'], box['x2'] = min(box['x1'], box['x2']), max(box['x1'], box['x2'])
-            box['y1'], box['y2'] = min(box['y1'], box['y2']), max(box['y1'], box['y2'])
+        if self.selected_item_idx is not None:
+            item = self.annotations[self.selected_item_idx]
+            if item['type'] == 'box': # Don't normalize arrows, they must keep direction
+                item['x1'], item['x2'] = min(item['x1'], item['x2']), max(item['x1'], item['x2'])
+                item['y1'], item['y2'] = min(item['y1'], item['y2']), max(item['y1'], item['y2'])
 
         self.interaction_state = "IDLE"
         self.draw_interactive_elements()
 
-    def delete_selected_box(self):
-        if self.selected_box_idx is not None and self.selected_box_idx < len(self.panel_boxes):
-            self.panel_boxes.pop(self.selected_box_idx)
-            self.selected_box_idx = None
+    def delete_selected_item(self):
+        if self.selected_item_idx is not None:
+            del self.annotations[self.selected_item_idx]
+            self.selected_item_idx = None
             self.draw_interactive_elements()
-
-    def copy_selected_box(self):
-        if self.selected_box_idx is not None and self.selected_box_idx < len(self.panel_boxes):
-            self.clipboard_box = copy.deepcopy(self.panel_boxes[self.selected_box_idx])
-
-    def paste_box(self):
-        if self.clipboard_box is not None:
-            new_box = copy.deepcopy(self.clipboard_box)
             
-            # Offset the box slightly so it doesn't paste invisibly on top of the old one
+    def copy_selected_box(self): # Note: Name matches main_app hotkey route
+        if self.selected_item_idx is not None and self.selected_item_idx < len(self.annotations):
+            self.clipboard_item = copy.deepcopy(self.annotations[self.selected_item_idx])
+
+    def paste_box(self): # Note: Name matches main_app hotkey route
+        if self.clipboard_item is not None:
+            new_item = copy.deepcopy(self.clipboard_item)
             offset = 20 / self.view_scale 
-            new_box['x1'] += offset
-            new_box['y1'] += offset
-            new_box['x2'] += offset
-            new_box['y2'] += offset
-            
-            # Restrict scaling on the pasted box
-            new_box['scalable'] = False
-            
-            self.panel_boxes.append(new_box)
-            self.selected_box_idx = len(self.panel_boxes) - 1
+            new_item['x1'] += offset
+            new_item['y1'] += offset
+            new_item['x2'] += offset
+            new_item['y2'] += offset
+            new_item['scalable'] = False # Prevent resizing pasted items
+            self.annotations.append(new_item)
+            self.selected_item_idx = len(self.annotations) - 1
             self.draw_interactive_elements()
 
     # --- GRID / SELECTION LOGIC ---
@@ -434,7 +455,7 @@ class PanelCreationTab(ttk.Frame):
             
             self.composite_pil = None 
             self.tk_img = None
-            self.panel_boxes.clear() 
+            self.annotations.clear() 
             
             if list(self.cell_images.keys()) and (r != len(set(k[0] for k in self.cell_images.keys())) or c != len(set(k[1] for k in self.cell_images.keys()))):
                 if messagebox.askyesno("Clear Images?", "Grid dimensions changed. Clear currently selected images?"):
@@ -457,8 +478,9 @@ class PanelCreationTab(ttk.Frame):
         gap = int(self.spin_gap.get()) // 10
         if gap < 2: gap = 5
         
-        top_margin = 50
-        left_margin = 70
+        # INCREASED margins to fit Row/Col Buttons
+        top_margin = 80
+        left_margin = 100
         
         avail_w = cw - (2 * gap) - left_margin
         avail_h = ch - (2 * gap) - top_margin
@@ -476,6 +498,30 @@ class PanelCreationTab(ttk.Frame):
         start_x = left_margin + gap
         start_y = top_margin + gap
         
+        # --- UPDATED: Subtle Column Selector Buttons (Down Arrow) ---
+        for c in range(cols):
+            cx = start_x + c * (self.canvas_cell_w + gap) + self.canvas_cell_w // 2
+            cy = start_y - 20  # Moved closer to grid
+            btn = tk.Button(
+                self.canvas, text="↓", font=("Arial", 14, "bold"), 
+                bg="#2e2e2e", fg="#888888", activebackground="#444444", activeforeground="white", 
+                relief=tk.FLAT, cursor="hand2", borderwidth=0, 
+                command=lambda col=c: self.select_images_for_col(col)
+            )
+            self.canvas.create_window(cx, cy, window=btn, anchor=tk.CENTER)
+
+        # --- UPDATED: Subtle Row Selector Buttons (Left Arrow) ---
+        for r in range(rows):
+            cx = start_x - 20  # Moved closer to grid
+            cy = start_y + r * (self.canvas_cell_h + gap) + self.canvas_cell_h // 2
+            btn = tk.Button(
+                self.canvas, text="→", font=("Arial", 14, "bold"), 
+                bg="#2e2e2e", fg="#888888", activebackground="#444444", activeforeground="white", 
+                relief=tk.FLAT, cursor="hand2", borderwidth=0, 
+                command=lambda row=r: self.select_images_for_row(row)
+            )
+            self.canvas.create_window(cx, cy, window=btn, anchor=tk.CENTER)
+        # Draw Cells
         for r in range(rows):
             for c in range(cols):
                 x1 = start_x + c * (self.canvas_cell_w + gap)
@@ -489,7 +535,7 @@ class PanelCreationTab(ttk.Frame):
                 if path:
                     self.draw_cell_thumbnail(r, c, x1, y1, x2, y2, path)
                 else:
-                    btn = tk.Button(self.canvas, text=f"Select Img(s)\n({r},{c})", font=("Arial", 8), bg="#333333", fg="white", command=lambda row=r, col=c: self.select_images_for_cell(row, col))
+                    btn = tk.Button(self.canvas, text=f"Select Img\n(Cell {r+1},{c+1})", font=("Arial", 8), bg="#333333", fg="white", command=lambda row=r, col=c: self.select_images_for_cell(row, col))
                     self.canvas.create_window(x1 + self.canvas_cell_w//2, y1 + self.canvas_cell_h//2, window=btn, anchor=tk.CENTER)
 
     def select_images_for_cell(self, start_row, start_col):
@@ -516,6 +562,38 @@ class PanelCreationTab(ttk.Frame):
                 r += 1
                 
         self.cell_aspect_ratio = self.get_cell_aspect()
+        self.generate_canvas_placeholders()
+
+    def select_images_for_row(self, r):
+        f_types = [("Microscopy Images", "*.tif *.tiff *.png *.jpg *.jpeg"), ("All Files", "*.*")]
+        paths = filedialog.askopenfilenames(title=f"Select Image(s) for Row {r+1}", filetypes=f_types)
+        if not paths: return
+        
+        # REMOVED sorted() here to preserve your click-selection order
+        self.save_selection_state()
+        cols = self.grid_dims[1]
+        c = 0
+        for path in paths: # Process in the order provided by the OS/Explorer
+            if c >= cols: break
+            self.cell_images[(r, c)] = path
+            if (r, c) not in self.cell_rotations: self.cell_rotations[(r, c)] = 0
+            c += 1
+        self.generate_canvas_placeholders()
+
+    def select_images_for_col(self, c):
+        f_types = [("Microscopy Images", "*.tif *.tiff *.png *.jpg *.jpeg"), ("All Files", "*.*")]
+        paths = filedialog.askopenfilenames(title=f"Select Image(s) for Col {c+1}", filetypes=f_types)
+        if not paths: return
+        
+        # REMOVED sorted() here to preserve your click-selection order
+        self.save_selection_state()
+        rows = self.grid_dims[0]
+        r = 0
+        for path in paths: # Process in the order provided by the OS/Explorer
+            if r >= rows: break
+            self.cell_images[(r, c)] = path
+            if (r, c) not in self.cell_rotations: self.cell_rotations[(r, c)] = 0
+            r += 1
         self.generate_canvas_placeholders()
 
     def draw_cell_thumbnail(self, r, c, x1, y1, x2, y2, path):
@@ -590,8 +668,7 @@ class PanelCreationTab(ttk.Frame):
             }
             
             fonts_to_try = font_map.get(selected_font, ("arialbd.ttf", "arial.ttf"))
-            if not bold:
-                fonts_to_try = (fonts_to_try[1], fonts_to_try[0])
+            if not bold: fonts_to_try = (fonts_to_try[1], fonts_to_try[0])
             
             for f in fonts_to_try + ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf"):
                 try: return ImageFont.truetype(f, size_px)
@@ -697,7 +774,7 @@ class PanelCreationTab(ttk.Frame):
         self.pan_y = (ch - (ih * self.view_scale)) / 2
 
         self.render_canvas_preview()
-        messagebox.showinfo("Success", "High-Resolution composite built. You can now zoom (scroll), pan (middle click), and draw boxes (left click) directly on it.")
+        messagebox.showinfo("Success", "High-Resolution composite built. You can now pan, zoom, and draw annotations directly on it.")
 
     # --- SEPARATED RENDERING ENGINE ---
     
@@ -706,7 +783,6 @@ class PanelCreationTab(ttk.Frame):
              if self.grid_dims: self.generate_canvas_placeholders()
              return
 
-        # Crucial Fix: Wipe the entire canvas to clear out the interactive placeholder text
         self.canvas.delete("all")
         
         target_w = max(1, int(self.composite_pil.size[0] * self.view_scale))
@@ -722,22 +798,30 @@ class PanelCreationTab(ttk.Frame):
 
     def draw_interactive_elements(self):
         self.canvas.delete("overlay")
-        for i, box in enumerate(self.panel_boxes):
-            x1, y1 = self.img_to_screen(box['x1'], box['y1'])
-            x2, y2 = self.img_to_screen(box['x2'], box['y2'])
+        for i, item in enumerate(self.annotations):
+            x1, y1 = self.img_to_screen(item['x1'], item['y1'])
+            x2, y2 = self.img_to_screen(item['x2'], item['y2'])
             
-            is_selected = (i == self.selected_box_idx)
+            is_selected = (i == self.selected_item_idx)
             outline_color = "#FFD700" if is_selected else "#FFFFFF"
-            dash_pattern = (4, 4) if not is_selected else None
-
-            self.canvas.create_rectangle(x1, y1, x2, y2, outline=outline_color, width=2, dash=dash_pattern, tags="overlay")
             
-            if is_selected:
-                # NEW: Only draw white resize handles if the box is scalable
-                if box.get('scalable', True):
-                    handles = self.get_handle_rects(box)
-                    for hx1, hy1, hx2, hy2 in handles.values():
-                        self.canvas.create_rectangle(hx1, hy1, hx2, hy2, fill="white", outline="black", tags="overlay")
+            if item['type'] == 'box':
+                dash_pattern = (4, 4) if not is_selected else None
+                self.canvas.create_rectangle(x1, y1, x2, y2, outline=outline_color, width=2, dash=dash_pattern, tags="overlay")
+            
+            elif item['type'] == 'arrow':
+                self.canvas.create_line(x1, y1, x2, y2, fill=outline_color, width=3, arrow=tk.LAST, arrowshape=(16, 20, 6), tags="overlay")
+
+            elif item['type'] == 'text':
+                self.canvas.create_text(x1, y1, text=item.get('text', ''), fill=outline_color, font=("Arial", 16, "bold"), anchor=tk.NW, tags="overlay")
+                if is_selected:
+                    self.canvas.create_rectangle(x1-2, y1-2, x2+2, y2+2, outline=outline_color, dash=(2, 2), tags="overlay")
+
+            # Draw Resizing Handles
+            if is_selected and item.get('scalable', True):
+                handles = self.get_handle_rects(item)
+                for hx1, hy1, hx2, hy2 in handles.values():
+                    self.canvas.create_rectangle(hx1, hy1, hx2, hy2, fill="white", outline="black", tags="overlay")
 
     def draw_dashed_line(self, draw, pt1, pt2, fill, width, dash_len=10):
         x1, y1 = pt1
@@ -771,13 +855,31 @@ class PanelCreationTab(ttk.Frame):
             dyn_thick = max(3, int(min(img_w, img_h) * 0.003))
             dash_len = dyn_thick * 4
 
-            for box in self.panel_boxes:
-                x1, y1 = box['x1'], box['y1']
-                x2, y2 = box['x2'], box['y2']
-                self.draw_dashed_line(draw, (x1, y1), (x2, y1), fill="yellow", width=dyn_thick, dash_len=dash_len)
-                self.draw_dashed_line(draw, (x1, y2), (x2, y2), fill="yellow", width=dyn_thick, dash_len=dash_len)
-                self.draw_dashed_line(draw, (x1, y1), (x1, y2), fill="yellow", width=dyn_thick, dash_len=dash_len)
-                self.draw_dashed_line(draw, (x2, y1), (x2, y2), fill="yellow", width=dyn_thick, dash_len=dash_len)
+            for item in self.annotations:
+                x1, y1 = item['x1'], item['y1']
+                x2, y2 = item['x2'], item['y2']
+                
+                if item['type'] == 'box':
+                    self.draw_dashed_line(draw, (x1, y1), (x2, y1), fill="yellow", width=dyn_thick, dash_len=dash_len)
+                    self.draw_dashed_line(draw, (x1, y2), (x2, y2), fill="yellow", width=dyn_thick, dash_len=dash_len)
+                    self.draw_dashed_line(draw, (x1, y1), (x1, y2), fill="yellow", width=dyn_thick, dash_len=dash_len)
+                    self.draw_dashed_line(draw, (x2, y1), (x2, y2), fill="yellow", width=dyn_thick, dash_len=dash_len)
+                
+                elif item['type'] == 'arrow':
+                    draw.line([(x1, y1), (x2, y2)], fill="yellow", width=dyn_thick)
+                    angle = math.atan2(y2 - y1, x2 - x1)
+                    arrow_len = dyn_thick * 6
+                    arrow_angle = 0.5
+                    p1 = (x2 - arrow_len * math.cos(angle - arrow_angle), y2 - arrow_len * math.sin(angle - arrow_angle))
+                    p2 = (x2 - arrow_len * math.cos(angle + arrow_angle), y2 - arrow_len * math.sin(angle + arrow_angle))
+                    draw.polygon([(x2, y2), p1, p2], fill="yellow")
+
+                elif item['type'] == 'text':
+                    try:
+                        fnt = ImageFont.truetype("arialbd.ttf", int(dyn_thick * 12))
+                    except:
+                        fnt = ImageFont.load_default()
+                    draw.text((x1, y1), item.get('text', ''), fill="yellow", font=fnt)
 
             _, ext = os.path.splitext(path)
             mode = "RGBA" if ext.lower() in [".png", ".tif", ".tiff"] else "RGB"
