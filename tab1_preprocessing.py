@@ -115,18 +115,18 @@ class PreProcessingTab(ttk.Frame):
         tk.Label(proj_frame, text="End:").grid(row=1, column=0, sticky="e", pady=2)
         self.spin_z_end = tk.Spinbox(proj_frame, from_=0, to=0, width=4, command=self.update_preview)
         self.spin_z_end.grid(row=1, column=1, pady=2, padx=2)
-        
-            # Button takes up 2 rows on the right side
-        self.btn_preview_merge = tk.Button(proj_frame, text="👁 Preview\nMerge", command=self.toggle_merge_preview)
-        self.btn_preview_merge.grid(row=0, column=2, rowspan=2, padx=(5, 0), sticky="nsew")
-        proj_frame.grid_columnconfigure(2, weight=1) # Makes the button expand to fill the right side
 
-        # Cropping Tool
-        crop_frame = tk.LabelFrame(control_frame, text="Cropping Tool", padx=10, pady=5)
-        crop_frame.pack(fill=tk.X, pady=2)
-        tk.Label(crop_frame, text="Draw a rectangle on the image to crop.", fg="gray").pack(anchor="w", pady=(0,2))
-        tk.Button(crop_frame, text="✂ Crop to Selection", command=self.apply_crop, bg="#f39c12", fg="white").pack(fill=tk.X, pady=2)
-        tk.Button(crop_frame, text="🔄 Reset Original Image", command=self.reset_crop).pack(fill=tk.X, pady=2)
+        # --- NEW: Z-Projection Method Dropdown ---
+        tk.Label(proj_frame, text="Method:").grid(row=2, column=0, sticky="e", pady=2)
+        self.combo_proj_method = ttk.Combobox(proj_frame, values=["Max IP", "Mean IP", "Sum IP", "Min IP"], state="readonly", width=8)
+        self.combo_proj_method.grid(row=2, column=1, pady=2, padx=2)
+        self.combo_proj_method.set("Max IP")
+        self.combo_proj_method.bind("<<ComboboxSelected>>", self.update_preview)
+        
+        # Button takes up 3 rows now on the right side
+        self.btn_preview_merge = tk.Button(proj_frame, text="👁 Preview\nMerge", command=self.toggle_merge_preview)
+        self.btn_preview_merge.grid(row=0, column=2, rowspan=3, padx=(5, 0), sticky="nsew")
+        proj_frame.grid_columnconfigure(2, weight=1)
 
         # ---------------------------------------------------------
         # Channel Visibility
@@ -138,13 +138,11 @@ class PreProcessingTab(ttk.Frame):
         self.var_ch_g = tk.BooleanVar(value=True)
         self.var_ch_b = tk.BooleanVar(value=True)
 
-        # Variables to store the actual RGB tuples for rendering/blending
         self.color_r = (255, 0, 0)   # Default Pure Red
         self.color_g = (0, 255, 0)   # Default Pure Green
         self.color_b = (0, 0, 255)   # Default Pure Blue
+        # --------------------------------------------
 
-        # Build the three rows and store the UI elements as class attributes 
-        # so self.pick_color() can access and update them later.
         self.btn_color_r, self.lbl_ch_r = self.create_channel_row(chan_frame, "Alexa Fluor 568 (Red)", self.var_ch_r, "R", "#FF0000")
         self.btn_color_g, self.lbl_ch_g = self.create_channel_row(chan_frame, "Alexa Fluor 488 (Green)", self.var_ch_g, "G", "#00FF00")
         self.btn_color_b, self.lbl_ch_b = self.create_channel_row(chan_frame, "DAPI (Blue)", self.var_ch_b, "B", "#0000FF")
@@ -154,6 +152,10 @@ class PreProcessingTab(ttk.Frame):
         # ---------------------------------------------------------
         adj_frame = tk.LabelFrame(control_frame, text="Channel Adjustments", padx=10, pady=5)
         adj_frame.pack(fill=tk.X, pady=2)
+
+        # --- NEW: Toggle to bypass B/C & Dynamic Range ---
+        self.var_apply_adjustments = tk.BooleanVar(value=True)
+        tk.Checkbutton(adj_frame, text="Apply Adjustments & Range Expansion", variable=self.var_apply_adjustments, command=self.update_preview).pack(fill=tk.X, pady=(0,5))
         
         # Data dictionary to remember the user's settings for each channel
         self.adj_data = {
@@ -179,7 +181,7 @@ class PreProcessingTab(ttk.Frame):
         
         # Contrast Slider (C:) - Side by side!
         tk.Label(slider_frame, text="C:", font=("Arial", 9, "bold"), fg="gray").grid(row=0, column=0, sticky="e")
-        self.scale_contrast = tk.Scale(slider_frame, from_=0.1, to=5.0, resolution=0.05, orient=tk.HORIZONTAL, 
+        self.scale_contrast = tk.Scale(slider_frame, from_=0.0, to=5.0, resolution=0.05, orient=tk.HORIZONTAL, 
                                        command=self.on_shared_slider_move, 
                                        width=10, sliderlength=15) # Made thinner & less chunky
         self.scale_contrast.grid(row=0, column=1, sticky="ew", padx=(0, 5))
@@ -272,6 +274,12 @@ class PreProcessingTab(ttk.Frame):
 # --- Preview zoom and pan ---
     def on_zoom(self, event):
         """Handles zoom gestures, preventing zooming out past full-window fit."""
+        """Processes zooming only if Control key is held, otherwise passes event to trackpad pan."""
+        # 0x0004 represents the Control key state flag in Tkinter
+        if not (event.state & 0x0004):
+            # No control key? This is a normal trackpad pan gesture!
+            self.on_trackpad_pan(event)
+            return
         # --- THE FIX: Look for the active raw matrix slice instead of the missing PIL image ---
         if not hasattr(self, 'active_raw_slice') or self.active_raw_slice is None:
             return
@@ -327,11 +335,12 @@ class PreProcessingTab(ttk.Frame):
             
             self.img_scale = new_scale
             # Keep master state variables explicitly synced
+            # (Inside on_zoom...)
             self.zoom_scale = new_scale
             self.img_x = self.img_offset_x
             self.img_y = self.img_offset_y
 
-        self.redraw_image()
+        self.redraw_image() 
 
     def reset_view_layout(self, event=None):
         """Instantly resets zoom factor and centers the image on the canvas."""
@@ -353,10 +362,11 @@ class PreProcessingTab(ttk.Frame):
         self.scale_x = fit_scale
         self.img_offset_x = (canvas_w - int(orig_w * fit_scale)) // 2
         self.img_offset_y = (canvas_h - int(orig_h * fit_scale)) // 2
+        # (Inside reset_view_layout...)
         self.img_x = self.img_offset_x
         self.img_y = self.img_offset_y
         
-        self.redraw_image()
+        self.update_preview()  # Changed from self.redraw_image()
 
     def on_pan_start(self, event):
         """Initializes coordinates for drag-panning and changes cursor shape."""
@@ -372,14 +382,13 @@ class PreProcessingTab(ttk.Frame):
         self.img_offset_x += dx
         self.img_offset_y += dy
         
-        # Keep master tracking state synchronized
         self.img_x = self.img_offset_x
         self.img_y = self.img_offset_y
 
         self.pan_start_x = event.x
         self.pan_start_y = event.y
 
-        self.redraw_image()
+        self.redraw_image()  
 
     def on_pan_end(self, event):
         """Restores the standard crop crosshair cursor when right-click pan drag ends."""
@@ -407,10 +416,11 @@ class PreProcessingTab(ttk.Frame):
                 else:
                     self.img_offset_y += pan_step
 
-            # Synchronize modified structural properties
+            # (Inside on_trackpad_pan...)
             self.img_x = self.img_offset_x
             self.img_y = self.img_offset_y
-            self.redraw_image()
+            
+            self.redraw_image()  
 
     def redraw_image(self):
         """Resamples the base image and draws it at the active scale and offsets."""
@@ -751,7 +761,7 @@ class PreProcessingTab(ttk.Frame):
             print(f"Failed to burn scale bar: {e}")
             return image_rgb
 
-    # --- Mouse Events for Cropping ---
+    # --- Mouse Events ---
     def on_mouse_press(self, event):
         # Record starting point in absolute canvas space
         self.start_canvas_x = event.x
@@ -783,47 +793,6 @@ class PreProcessingTab(ttk.Frame):
             y1, y2 = min(raw_y1, raw_y2), max(raw_y1, raw_y2)
             
             self.current_rect = (x1, y1, x2, y2)
-
-    def apply_crop(self):
-        if not self.current_rect or self.raw_volume is None: return
-        x1, y1, x2, y2 = self.current_rect
-        
-        x_start, x_end = min(x1, x2), max(x1, x2)
-        y_start, y_end = min(y1, y2), max(y1, y2)
-        
-        # Convert canvas coordinates to raw image indices
-        img_x1 = int((x_start - self.img_offset_x) / self.img_scale)
-        img_y1 = int((y_start - self.img_offset_y) / self.img_scale)
-        img_x2 = int((x_end - self.img_offset_x) / self.img_scale)
-        img_y2 = int((y_end - self.img_offset_y) / self.img_scale)
-        
-        # Constrain to image bounds
-        h, w = self.raw_volume.shape[1:3]
-        img_x1, img_x2 = max(0, min(img_x1, w)), max(0, min(img_x2, w))
-        img_y1, img_y2 = max(0, min(img_y1, h)), max(0, min(img_y2, h))
-        
-        if img_x2 <= img_x1 or img_y2 <= img_y1:
-            messagebox.showwarning("Crop Error", "Invalid crop area selected.")
-            return
-        
-        # Slice the numpy array (applies to all Z-layers and Channels)
-        self.raw_volume = self.raw_volume[:, img_y1:img_y2, img_x1:img_x2, :]
-        
-        self.current_rect = None
-        if self.rect_id:
-            self.canvas.delete(self.rect_id)
-            self.rect_id = None
-            
-        self.update_preview()
-
-    def reset_crop(self):
-        if self.original_raw_volume is not None:
-            self.raw_volume = self.original_raw_volume
-            self.current_rect = None
-            if self.rect_id:
-                self.canvas.delete(self.rect_id)
-                self.rect_id = None
-            self.update_preview()
 
     # --- Adjustment Logic ---
     def on_slider_move(self, event=None):
@@ -1178,6 +1147,10 @@ class PreProcessingTab(ttk.Frame):
         elif current_z is None:
             current_z = 0
 
+        # --- NEW: Check if adjustments should be bypassed ---
+        var_adj = getattr(self, 'var_apply_adjustments', None)
+        apply_adj = var_adj.get() if var_adj is not None else True
+
         channel_params = [
             (self.adj_data["Red (Alexa 568)"]["c"], self.adj_data["Red (Alexa 568)"]["b"], self.var_ch_r.get()),
             (self.adj_data["Green (Alexa 488)"]["c"], self.adj_data["Green (Alexa 488)"]["b"], self.var_ch_g.get()),
@@ -1192,8 +1165,15 @@ class PreProcessingTab(ttk.Frame):
                 continue
             
             ch_data = image_multi[:, :, i].astype(np.float32)
+
+            # --- NEW: Raw display bypass skips percentiles and contrast ---
+            if not apply_adj:
+                norm_ch = ch_data / 65535.0
+                norm_ch = np.clip(norm_ch, 0.0, 1.0)
+                processed_channels.append(norm_ch)
+                continue
             
-            # Pull from cache if available
+            # Pull from cache if available (Correctly unpacking p_min and val_range!)
             if hasattr(self, 'z_percentiles') and current_z in self.z_percentiles and i < len(self.z_percentiles[current_z]):
                 p_min, val_range = self.z_percentiles[current_z][i]
             else:
@@ -1259,11 +1239,20 @@ class PreProcessingTab(ttk.Frame):
         self.update_preview()
 
     def update_preview(self, event=None):
-        """Fetches the active raw Z-slice and coordinates layout initialization."""
+        """Schedules a preview update, debouncing rapid consecutive calls to eliminate lag."""
         if self.raw_volume is None: 
             return
-        
-        import numpy as np
+            
+        # Cancel any pending preview updates that haven't executed yet
+        if hasattr(self, '_preview_after_id') and self._preview_after_id:
+            self.canvas.after_cancel(self._preview_after_id)
+            
+        # Schedule execution 15ms out to eliminate slider drag lagging
+        self._preview_after_id = self.canvas.after(15, self._execute_update_preview)
+
+    def _execute_update_preview(self):
+        """The actual heavy preview updater, optimized for strict cache hits and PIL image generation."""
+        self._preview_after_id = None
         
         # 1. Pull the raw matrix data frame out of RAM cache
         if self.is_merged_preview:
@@ -1277,10 +1266,23 @@ class PreProcessingTab(ttk.Frame):
                 
             self.lbl_z_current.config(text=f"Previewing Merge: Stacks {z_start} to {z_end}")
             stack_slice = self.raw_volume[z_start:z_end+1]
-            self.active_raw_slice = np.max(stack_slice, axis=0) 
+            
+            # Map dropdown string selections safely
+            combo_method = getattr(self, 'combo_proj_method', None)
+            method = combo_method.get() if combo_method is not None else "Max IP"
+            
+            if method in ["Maximum", "Max IP"]:
+                self.active_raw_slice = np.max(stack_slice, axis=0)
+            elif method in ["Mean", "Mean IP"]:
+                self.active_raw_slice = np.mean(stack_slice, axis=0).astype(stack_slice.dtype)
+            elif method in ["Sum", "Sum IP"]:
+                self.active_raw_slice = np.clip(np.sum(stack_slice, axis=0, dtype=np.float32), 0, 65535).astype(stack_slice.dtype)
+            elif method in ["Minimum", "Min IP"]:
+                self.active_raw_slice = np.min(stack_slice, axis=0)
+                
             self.current_z_idx = int((z_start + z_end) // 2)  
         else:
-            self.current_z_idx = self.scale_z.get()
+            self.current_z_idx = int(float(self.scale_z.get()))
             self.lbl_z_current.config(text=f"Current Stack: {self.current_z_idx}")
             self.active_raw_slice = self.raw_volume[self.current_z_idx]
 
@@ -1288,7 +1290,7 @@ class PreProcessingTab(ttk.Frame):
         if img_w == 0 or img_h == 0: 
             return 
 
-        # 2. Setup initial scale layout matrices on first boot pass
+        # 2. Setup initial scale layout matrices on first pass
         if not hasattr(self, '_initialized_view') or not self._initialized_view:
             canvas_w = self.canvas.winfo_width()
             canvas_h = self.canvas.winfo_height()
@@ -1296,18 +1298,21 @@ class PreProcessingTab(ttk.Frame):
                 canvas_w, canvas_h = 800, 600
             
             fit_scale = min(canvas_w / img_w, canvas_h / img_h)
-            self.zoom_scale = fit_scale   
-            self.img_scale = fit_scale    
-            self.scale_x = fit_scale      
+            self.img_scale = fit_scale
+            self.zoom_scale = fit_scale
+            self.scale_x = fit_scale
             
-            # Center coordinates across property registers
-            self.img_x = (canvas_w - int(img_w * fit_scale)) // 2  
-            self.img_y = (canvas_h - int(img_h * fit_scale)) // 2  
-            self.img_offset_x = self.img_x
-            self.img_offset_y = self.img_y
+            self.img_offset_x = (canvas_w - int(img_w * fit_scale)) // 2  
+            self.img_offset_y = (canvas_h - int(img_h * fit_scale)) // 2  
+            self.img_x = self.img_offset_x
+            self.img_y = self.img_offset_y
             self._initialized_view = True
 
-        # 3. Fire hybrid renderer loop
+        # 3. FIX: Process matrix parameters and generate self.current_pil_image for panning
+        view_image_uint8 = self.apply_image_math(self.active_raw_slice, self.current_z_idx)
+        self.current_pil_image = Image.fromarray(view_image_uint8)
+
+        # 4. Fire renderer loop
         self.redraw_image()
 
     def redraw_image(self):
