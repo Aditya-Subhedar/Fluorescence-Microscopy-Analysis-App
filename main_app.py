@@ -22,7 +22,7 @@ from tab6_oft_tracking import OFTTrackingTab
 class CytoQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CytoQuant Version 23")
+        self.root.title("CytoQuant Version 24")
         self.root.geometry("1920x1080")
 
         # Load Icon
