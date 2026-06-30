@@ -811,14 +811,39 @@ class PreProcessingTab(ttk.Frame):
 
     # --- Loading ---
     def load_files(self):
-        """Opens a file dialog to select multiple microscopy formats."""
+        """Opens a file dialog, unpacks multi-series files (like LIF), and initializes loading."""
         file_paths = filedialog.askopenfilenames(
             title="Select Microscopy Images (CZI, LIF, TIFF)", 
             filetypes=[("Microscopy Files", "*.czi *.lif *.tif *.tiff")]
         )
         if not file_paths: return
 
-        self.loaded_files = list(file_paths)
+        self.lbl_filename.config(text="Scanning containers...")
+        self.update()
+
+        # Instead of just storing paths, we store dictionaries with the series index
+        self.loaded_files = []
+        
+        for path in file_paths:
+            if path.lower().endswith('.lif'):
+                try:
+                    from readlif.reader import LifFile
+                    lif = LifFile(path)
+                    # Add every series inside the LIF as its own "image" in the playlist
+                    for i in range(lif.num_images):
+                        img_name = lif.get_image(i).name
+                        display_name = f"{os.path.basename(path)} [{img_name}]"
+                        self.loaded_files.append({'path': path, 'series': i, 'name': display_name})
+                except Exception as e:
+                    print(f"Failed to scan LIF {path}: {e}")
+            else:
+                # Standard files default to series 0
+                self.loaded_files.append({'path': path, 'series': 0, 'name': os.path.basename(path)})
+
+        if not self.loaded_files:
+            self.lbl_filename.config(text="No valid files loaded.")
+            return
+
         self.current_file_index = 0
         self.load_image_from_index()
 
@@ -916,12 +941,12 @@ class PreProcessingTab(ttk.Frame):
         
         return sorted_img
     
-    def get_lif_pixel_size_um(self, file_path):
-        """Extracts the physical X-axis pixel size in micrometers from a LIF file."""
+    def get_lif_pixel_size_um(self, file_path, series_idx=0):
+        """Extracts the physical X-axis pixel size in micrometers from a specific LIF series."""
         try:
             from readlif.reader import LifFile
             lif = LifFile(file_path)
-            lif_img = lif.get_image(0) # Default to the first series in the container
+            lif_img = lif.get_image(series_idx) # Target the specific series!
             
             x_scale = lif_img.scale[0]
             if x_scale:
@@ -974,7 +999,11 @@ class PreProcessingTab(ttk.Frame):
         """Loads the current file, normalizes it to a standard ZYXC matrix, and initializes UI."""
         if not hasattr(self, 'loaded_files') or not self.loaded_files: return
 
-        file_path = self.loaded_files[self.current_file_index]
+        # --- EXTRACT THE SPECIFIC ITEM DATA ---
+        current_item = self.loaded_files[self.current_file_index]
+        file_path = current_item['path']
+        series_idx = current_item['series']
+        display_name = current_item['name']
         
         # --- Update UI ---
         total = len(self.loaded_files)
@@ -987,7 +1016,7 @@ class PreProcessingTab(ttk.Frame):
         self.update() 
 
         try:
-            self.original_filename = os.path.basename(file_path)
+            self.original_filename = display_name
             self.czi_channel_map = {'R': 0, 'G': 1, 'B': 2} # Default fallback map
             
             # =========================================================
@@ -996,43 +1025,14 @@ class PreProcessingTab(ttk.Frame):
             if file_path.lower().endswith('.czi'):
                 import czifile
                 import numpy as np
-                with czifile.CziFile(file_path) as czi:
-                    img = czi.asarray()
-                    raw_axes = list(czi.axes)
-                    
-                    c_index = raw_axes.index('C') if 'C' in raw_axes else -1
-                    self.original_num_channels = img.shape[c_index] if c_index != -1 else 1
-
-                    squeeze_indices = [i for i, dim in enumerate(img.shape) if dim == 1]
-                    img = np.squeeze(img)
-                    current_axes = [ax for i, ax in enumerate(raw_axes) if i not in squeeze_indices]
-                    
-                    target_axes = ['Z', 'Y', 'X', 'C']
-                    for ax in target_axes:
-                        if ax not in current_axes:
-                            img = img[..., np.newaxis]
-                            current_axes.append(ax)
-                            
-                    source_indices = [current_axes.index(ax) for ax in target_axes]
-                    target_indices = [0, 1, 2, 3]
-                    img = np.moveaxis(img, source_indices, target_indices)
-
-                    # CZI Metadata extraction
-                    try:
-                        from pylibCZIrw import czi as pyczi
-                        with pyczi.open_czi(file_path) as czidoc:
-                            metadata_dict = czidoc.metadata
-                            # (Assume find_channels and unique_channels logic is here as you previously wrote it)
-                            # self.map_channels_from_xml(unique_channels)
-                    except Exception as meta_err:
-                        print(f"Warning: CZI Metadata extraction failed: {meta_err}")
+                # ... (Keep your CZI extraction code exactly as it is) ...
 
             elif file_path.lower().endswith('.lif'):
                 from readlif.reader import LifFile
                 import numpy as np
                 
                 lif = LifFile(file_path)
-                lif_img = lif.get_image(0) # Load first series
+                lif_img = lif.get_image(series_idx) # LOAD SPECIFIC SERIES HERE!
                 
                 z_slices = lif_img.info.get('z', 1)
                 c_channels = lif_img.info.get('channels', 1)
@@ -1050,21 +1050,18 @@ class PreProcessingTab(ttk.Frame):
                 self.original_num_channels = c_channels
                 
                 # --- DYNAMIC CHANNEL MAPPING FROM XML ---
-                # Initialize an empty map so we don't assume any layout
                 self.czi_channel_map = {'R': None, 'G': None, 'B': None}
                 
                 try:
                     root = lif.xml_root
                     img_name = lif_img.name
                     
-                    # Parse the internal XML to match this exact series name
                     for element in root.iter("Element"):
                         if element.get("Name") == img_name:
                             channel_nodes = element.findall(".//ChannelDescription")
                             for c_idx, ch_node in enumerate(channel_nodes):
                                 if c_idx >= c_channels: break
                                 
-                                # Extract string name and force lowercase for flexible matching
                                 c_name = (ch_node.get("Name") or ch_node.get("LUTName") or "").lower()
                                 
                                 if "blue" in c_name or "dapi" in c_name:
@@ -1077,8 +1074,6 @@ class PreProcessingTab(ttk.Frame):
                     print(f"Warning: LIF XML channel mapping failed: {meta_err}")
 
                 # --- SMART SEQUENTIAL FAILSAFE ---
-                # If any color slot is still unmapped (or if the XML didn't have names), 
-                # distribute remaining unassigned channel indices sequentially.
                 mapped_indices = [v for v in self.czi_channel_map.values() if v is not None]
                 unmapped_indices = [i for i in range(c_channels) if i not in mapped_indices]
                 
@@ -1135,7 +1130,7 @@ class PreProcessingTab(ttk.Frame):
             if file_path.lower().endswith('.czi'):
                 pixel_size = self.get_czi_pixel_size_um(file_path)
             elif file_path.lower().endswith('.lif'):
-                pixel_size = self.get_lif_pixel_size_um(file_path)
+                pixel_size = self.get_lif_pixel_size_um(file_path, series_idx) # PASS SPECIFIC SERIES INDEX!
                 
             if pixel_size and hasattr(self, 'entry_pixel_size'):
                 self.entry_pixel_size.delete(0, 'end')
