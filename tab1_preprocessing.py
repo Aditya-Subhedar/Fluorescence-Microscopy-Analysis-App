@@ -907,89 +907,6 @@ class PreProcessingTab(ttk.Frame):
             self.current_file_index += 1
             self.load_image_from_index()
 
-    def map_channels_from_xml(self, channels_metadata):
-        """Maps raw indices to R, G, B based on emission wavelengths or Zeiss Color tags."""
-        self.czi_channel_map = {'R': None, 'G': None, 'B': None}
-        
-        for idx, ch in enumerate(channels_metadata):
-            if idx >= self.original_num_channels: break # Safety limit
-            
-            # Grab data using the keys we defined in our new extractor
-            wave_str = ch.get('Wavelength', 'N/A')
-            color_hex = ch.get('Color', 'Unknown').upper()
-            
-            mapped = False
-
-            # 1. Try mapping by Wavelength first (Your original logic)
-            if wave_str != 'N/A':
-                try:
-                    wave = float(wave_str)
-                    # Convert to nanometers if saved in meters
-                    if 0 < wave < 1.0: 
-                        wave *= 1e9 
-                    
-                    # Strict wavelength boundaries
-                    if wave < 480: 
-                        self.czi_channel_map['B'] = idx
-                        mapped = True
-                    elif 480 <= wave < 550: 
-                        self.czi_channel_map['G'] = idx
-                        mapped = True
-                    elif wave >= 550: 
-                        self.czi_channel_map['R'] = idx
-                        mapped = True
-                except ValueError:
-                    pass
-
-            # 2. Smart Failsafe: Use Zeiss Hex Color if Wavelength failed
-            # Format is usually #AARRGGBB
-            if not mapped and color_hex.startswith('#') and len(color_hex) >= 9:
-                try:
-                    r_val = int(color_hex[3:5], 16)
-                    g_val = int(color_hex[5:7], 16)
-                    b_val = int(color_hex[7:9], 16)
-                    
-                    # Map based on the dominant color in the hex code
-                    if b_val > r_val and b_val > g_val:
-                        self.czi_channel_map['B'] = idx
-                    elif g_val > r_val and g_val > b_val:
-                        self.czi_channel_map['G'] = idx
-                    elif r_val > g_val and r_val > b_val:
-                        self.czi_channel_map['R'] = idx
-                except ValueError:
-                    pass
-
-        # 3. Final Failsafe: Sequential fill if both wave and color are missing
-        mapped_indices = [v for v in self.czi_channel_map.values() if v is not None]
-        unmapped_indices = [i for i in range(self.original_num_channels) if i not in mapped_indices]
-        
-        for color_key in ['R', 'G', 'B']:
-            if self.czi_channel_map[color_key] is None and unmapped_indices:
-                self.czi_channel_map[color_key] = unmapped_indices.pop(0)
-                
-        return self.czi_channel_map
-
-    def stack_rgb_image(self, img):
-        """Builds a strict (Z, Y, X, 3) RGB array for PIL processing."""
-        # Create empty volume with exactly 3 channels
-        sorted_img = np.zeros((*img.shape[:-1], 3), dtype=img.dtype)
-        
-        r_idx = self.czi_channel_map.get('R')
-        g_idx = self.czi_channel_map.get('G')
-        b_idx = self.czi_channel_map.get('B')
-        
-        # Standard RGB Mapping
-        # Slot 0 = Red, Slot 1 = Green, Slot 2 = Blue
-        if r_idx is not None and r_idx < img.shape[-1]: 
-            sorted_img[..., 0] = img[..., r_idx]
-            
-        if g_idx is not None and g_idx < img.shape[-1]: 
-            sorted_img[..., 1] = img[..., g_idx]
-            
-        if b_idx is not None and b_idx < img.shape[-1]: 
-            sorted_img[..., 2] = img[..., b_idx]
-        
-        return sorted_img
     
     def get_lif_pixel_size_um(self, file_path, series_idx=0):
         """Extracts the physical X-axis pixel size in micrometers from a specific LIF series."""
@@ -1075,6 +992,98 @@ class PreProcessingTab(ttk.Frame):
             if file_path.lower().endswith('.czi'):
                 import czifile
                 import numpy as np
+                import xml.etree.ElementTree as ET
+
+                with czifile.CziFile(file_path) as czi:
+                    img_raw = czi.asarray()
+                    axes = list(czi.axes)  # e.g., 'BCZYX0' or 'STCZYX0'
+                    shape = list(img_raw.shape)
+                    
+                    # --- 1. Extract Dynamic Channel Metadata ---
+                    channel_list = []
+                    try:
+                        metadata_xml = czi.metadata()
+                        if metadata_xml:
+                            root = ET.fromstring(metadata_xml)
+                            # CZI structure usually keeps channels under Dimensions -> Channels
+                            channels = root.findall('.//Dimensions/Channels/Channel')
+                            
+                            for c_idx, ch in enumerate(channels):
+                                ch_info = {}
+                                ch_info['name'] = ch.get('Name') or ch.findtext('Name') or f"Channel {c_idx + 1}"
+                                
+                                mapped = False
+                                wave_str = ch.findtext('EmissionWavelength')
+                                
+                                # 1a. Try mapping by Wavelength first (Your original logic)
+                                if wave_str:
+                                    try:
+                                        wave = float(wave_str)
+                                        if 0 < wave < 1.0: wave *= 1e9  # Convert meters to nm
+                                        
+                                        if wave < 480:
+                                            ch_info['rgb'], ch_info['hex'] = (0, 0, 255), "#0000FF"
+                                            mapped = True
+                                        elif 480 <= wave < 550:
+                                            ch_info['rgb'], ch_info['hex'] = (0, 255, 0), "#00FF00"
+                                            mapped = True
+                                        elif wave >= 550:
+                                            ch_info['rgb'], ch_info['hex'] = (255, 0, 0), "#FF0000"
+                                            mapped = True
+                                    except ValueError:
+                                        pass
+                                
+                                # 1b. Smart Failsafe: Zeiss Color Hex (#AARRGGBB)
+                                if not mapped:
+                                    color_hex = ch.findtext('Color')
+                                    if color_hex and color_hex.startswith('#') and len(color_hex) >= 9:
+                                        try:
+                                            r = int(color_hex[3:5], 16)
+                                            g = int(color_hex[5:7], 16)
+                                            b = int(color_hex[7:9], 16)
+                                            ch_info['rgb'] = (r, g, b)
+                                            ch_info['hex'] = f"#{r:02X}{g:02X}{b:02X}"
+                                        except ValueError:
+                                            pass
+                                            
+                                channel_list.append(ch_info)
+                    except Exception as meta_err:
+                        print(f"Warning: CZI metadata read failed: {meta_err}")
+
+                    self._temp_extracted_channels = channel_list
+
+                    # --- 2. Robust Dimension Slicing ---
+                    # We dynamically slice based on the axes string provided by czifile
+                    slices = []
+                    remaining_dims = []
+                    
+                    for dim, size in zip(axes, shape):
+                        if dim in ['Z', 'C', 'Y', 'X']:
+                            slices.append(slice(None))  # Keep these dimensions intact
+                            remaining_dims.append(dim)
+                        elif dim == 'S':  # Scene / Position
+                            slices.append(min(series_idx, size - 1))
+                        elif dim == 'T':  # Time
+                            slices.append(0)  # Default to first timepoint for now
+                        else:
+                            slices.append(0)  # Squash blocks, mosaics, or dummy '0' dims
+                            
+                    img_block = img_raw[tuple(slices)]
+
+                    # --- 3. Format strictly to (Z, Y, X, C) ---
+                    if 'Z' not in remaining_dims:
+                        img_block = np.expand_dims(img_block, axis=0)
+                        remaining_dims.insert(0, 'Z')
+                    if 'C' not in remaining_dims:
+                        img_block = np.expand_dims(img_block, axis=-1)
+                        remaining_dims.append('C')
+
+                    # Rearrange whatever order czifile gave us into standard ZYXC
+                    target_order = ['Z', 'Y', 'X', 'C']
+                    transpose_indices = [remaining_dims.index(dim) for dim in target_order]
+                    img = np.transpose(img_block, transpose_indices)
+                    
+                    self.original_num_channels = img.shape[3]
 
             elif file_path.lower().endswith('.lif'):
                 from readlif.reader import LifFile
@@ -1152,7 +1161,8 @@ class PreProcessingTab(ttk.Frame):
                                 channel_list.append({"name": c_name, "hex": hex_color})
                             channels_extracted = True
                     except Exception as meta_err:
-                        print(f"Warning: ND2 structured metadata read failed. Using fallback. Reason: {meta_err}")
+                        #print(f"Warning: ND2 structured metadata read failed. Using fallback. Reason: {meta_err}")
+                        pass
 
                     # Fallback if the metadata block was missing or corrupted
                     if not channels_extracted:
