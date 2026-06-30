@@ -845,10 +845,13 @@ class PreProcessingTab(ttk.Frame):
 
     # --- Loading ---
     def load_files(self):
-        """Opens a file dialog, unpacks multi-series files (like LIF), and initializes loading."""
+        """Opens a file dialog, unpacks multi-series files (like LIF, ND2), and initializes loading."""
+        import os
+        from tkinter import filedialog
+        
         file_paths = filedialog.askopenfilenames(
-            title="Select Microscopy Images (CZI, LIF, TIFF)", 
-            filetypes=[("Microscopy Files", "*.czi *.lif *.tif *.tiff")]
+            title="Select Microscopy Images (CZI, LIF, TIFF, ND2)", 
+            filetypes=[("Microscopy Files", "*.czi *.lif *.tif *.tiff *.nd2")]
         )
         if not file_paths: return
 
@@ -870,6 +873,19 @@ class PreProcessingTab(ttk.Frame):
                         self.loaded_files.append({'path': path, 'series': i, 'name': display_name})
                 except Exception as e:
                     print(f"Failed to scan LIF {path}: {e}")
+            
+            elif path.lower().endswith('.nd2'):
+                try:
+                    import nd2
+                    with nd2.ND2File(path) as reader:
+                        # Extract the 'P' (Position) dimension to see how many series exist
+                        num_series = reader.sizes.get('P', 1)
+                        for i in range(num_series):
+                            display_name = f"{os.path.basename(path)} [Series {i+1}]"
+                            self.loaded_files.append({'path': path, 'series': i, 'name': display_name})
+                except Exception as e:
+                    print(f"Failed to scan ND2 {path}: {e}")
+                    
             else:
                 # Standard files default to series 0
                 self.loaded_files.append({'path': path, 'series': 0, 'name': os.path.basename(path)})
@@ -1114,6 +1130,76 @@ class PreProcessingTab(ttk.Frame):
                 except Exception as meta_err:
                     print(f"Warning: LIF XML channel mapping failed: {meta_err}")
 
+            elif file_path.lower().endswith('.nd2'):
+                import nd2
+                import numpy as np
+
+                with nd2.ND2File(file_path) as reader:
+                    # --- 1. Extract Channels safely ---
+                    channel_list = []
+                    channels_extracted = False
+                    
+                    try:
+                        # ND2 library sometimes crashes on reconstructed files when accessing .metadata
+                        if hasattr(reader, 'metadata') and reader.metadata and reader.metadata.channels:
+                            for c_idx, ch_info in enumerate(reader.metadata.channels):
+                                c_name = ch_info.channel.name if hasattr(ch_info, 'channel') else f"Channel {c_idx + 1}"
+                                hex_color = "Unknown"
+                                if hasattr(ch_info, 'channel') and hasattr(ch_info.channel, 'colorRGB'):
+                                    int_color = ch_info.channel.colorRGB
+                                    if int_color is not None:
+                                        hex_color = f"#{int_color & 0xFFFFFF:06X}"
+                                channel_list.append({"name": c_name, "hex": hex_color})
+                            channels_extracted = True
+                    except Exception as meta_err:
+                        print(f"Warning: ND2 structured metadata read failed. Using fallback. Reason: {meta_err}")
+
+                    # Fallback if the metadata block was missing or corrupted
+                    if not channels_extracted:
+                        num_channels = reader.sizes.get('C', 1)
+                        for c_idx in range(num_channels):
+                            channel_list.append({"name": f"Channel {c_idx + 1}", "hex": "Unknown"})
+
+                    self._temp_extracted_channels = channel_list
+
+                    # --- 2. Robust Dimension Slicing ---
+                    sizes = reader.sizes  # e.g., {'P': 10, 'T': 1, 'Z': 1, 'C': 1, 'Y': 2048, 'X': 2048}
+                    arr = reader.asarray()
+                    
+                    slices = []
+                    remaining_dims = []
+                    
+                    # Dynamically slice out the exact image (Position/Series) we want
+                    for dim_name in sizes.keys():
+                        if dim_name in ['Y', 'X']:
+                            slices.append(slice(None)) # Keep full width/height
+                            remaining_dims.append(dim_name)
+                        elif dim_name == 'Z' or dim_name == 'C':
+                            slices.append(slice(None)) # Keep full Z-stack and Channels
+                            remaining_dims.append(dim_name)
+                        elif dim_name == 'P':
+                            slices.append(min(series_idx, sizes['P'] - 1)) # Select specific series
+                        elif dim_name == 'T':
+                            slices.append(0) # Default to first timepoint for now
+                        else:
+                            slices.append(0) # Squash any unknown dimensions
+
+                    img_block = arr[tuple(slices)]
+
+                    # --- 3. Format strictly to (Z, Y, X, C) ---
+                    # Pad dimensions if the image is missing Z or C
+                    if 'Z' not in remaining_dims:
+                        img_block = np.expand_dims(img_block, axis=0)
+                        remaining_dims.insert(0, 'Z')
+                    if 'C' not in remaining_dims:
+                        img_block = np.expand_dims(img_block, axis=-1)
+                        remaining_dims.append('C')
+
+                    # Transpose axes safely based on whatever order nd2 handed them to us
+                    target_order = ['Z', 'Y', 'X', 'C']
+                    transpose_indices = [remaining_dims.index(dim) for dim in target_order]
+                    img = np.transpose(img_block, transpose_indices)
+
             else:
                 import tifffile
                 import numpy as np
@@ -1206,12 +1292,13 @@ class PreProcessingTab(ttk.Frame):
                         hex_str = ch_meta["hex"]
                     else:
                         # SMART FALLBACK: If we have a name but no hardware color, guess it!
+                        # SMART FALLBACK: If we have a name but no hardware color, guess it!
                         lower_name = name.lower()
-                        if any(k in lower_name for k in ["blue", "dapi", "hoechst"]):
+                        if any(k in lower_name for k in ["blue", "dapi", "hoechst", "405"]):
                             rgb, hex_str = (0, 0, 255), "#0000FF"
-                        elif any(k in lower_name for k in ["green", "fitc", "gfp", "alexa 488"]):
+                        elif any(k in lower_name for k in ["green", "fitc", "gfp", "alexa 488", "488"]):
                             rgb, hex_str = (0, 255, 0), "#00FF00"
-                        elif any(k in lower_name for k in ["red", "tritc", "cy3", "cy5", "alexa 5"]):
+                        elif any(k in lower_name for k in ["red", "tritc", "cy3", "cy5", "alexa 5", "568", "594", "647"]):
                             rgb, hex_str = (255, 0, 0), "#FF0000"
                     
                 dynamic_channel_list.append({
