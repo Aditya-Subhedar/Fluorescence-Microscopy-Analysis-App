@@ -1118,8 +1118,8 @@ class PreProcessingTab(ttk.Frame):
                 import tifffile
                 import numpy as np
                 
-                # Load the raw TIFF array
-                img_raw = tifffile.imread(file_path)
+                # Load the raw TIFF array, ignoring multi-file OME linking if siblings are missing
+                img_raw = tifffile.imread(file_path, is_ome=False)
                 
                 # Ensure float32 or uint16 type checking as per your pipeline
                 if img_raw.dtype == np.uint8:
