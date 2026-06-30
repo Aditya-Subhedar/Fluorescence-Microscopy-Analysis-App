@@ -1117,12 +1117,53 @@ class PreProcessingTab(ttk.Frame):
             else:
                 import tifffile
                 import numpy as np
-                # ... (Keep TIFF extraction code exactly as it is) ...
-                img = tifffile.imread(file_path)
-                img = np.squeeze(img)
-                if img.ndim == 3: img = img[np.newaxis, ...]
-                self.original_num_channels = img.shape[-1]
-                self.czi_channel_map = {'R': 0, 'G': 1, 'B': 2}
+                
+                # Load the raw TIFF array
+                img_raw = tifffile.imread(file_path)
+                
+                # Ensure float32 or uint16 type checking as per your pipeline
+                if img_raw.dtype == np.uint8:
+                    img_raw = img_raw.astype(np.uint16) * 257  # scale to 16-bit range roughly if needed, or keep raw
+                
+                # --- ROBUST 4D RESHAPING FOR TIFFs ---
+                ndim = img_raw.ndim
+                shape = img_raw.shape
+                
+                if ndim == 2:
+                    # Case 1: Single 2D plane grayscale -> shape (Y, X)
+                    # Convert to (1, Y, X, 1) -> 1 Z-slice, 1 Channel
+                    img = img_raw[np.newaxis, :, :, np.newaxis]
+                    
+                elif ndim == 3:
+                    # Case 2: Could be standard RGB (Y, X, 3) or a Grayscale Z-stack (Z, Y, X)
+                    # Look at the last dimension to guess if it's channels
+                    if shape[2] in [3, 4]:  # Standard RGB or RGBA plane
+                        # Convert (Y, X, C) -> (1, Y, X, C)
+                        img = img_raw[np.newaxis, :, :, :]
+                    else:
+                        # Convert Grayscale Z-stack (Z, Y, X) -> (Z, Y, X, 1)
+                        img = img_raw[:, :, :, np.newaxis]
+                        
+                elif ndim == 4:
+                    # Case 3: Already multi-channel Z-stack or time series -> shape (Z, Y, X, C) or (C, Z, Y, X)
+                    # Standard microscopy outputs usually order multi-page tiffs as (Z, Y, X, C) or (Z, C, Y, X)
+                    # If the last dimension is very large (like height/width), channels might be at axis 1 or 0.
+                    if shape[3] > 20 and shape[1] <= 10:  # Appears to be (Z, C, Y, X)
+                        img = np.transpose(img_raw, (0, 2, 3, 1))
+                    elif shape[0] <= 10 and shape[3] > 20: # Appears to be (C, Z, Y, X)
+                        img = np.transpose(img_raw, (1, 2, 3, 0))
+                    else:
+                        img = img_raw
+                        
+                else:
+                    # Fallback for weirdly ordered high-dimensional hyperstacks
+                    img = img_raw
+                    while img.ndim < 4:
+                        img = img[:, :, :, np.newaxis]
+                    if img.ndim > 4:
+                        img = img[0, :, :, :, 0] # Squash extra dimensions safely
+                
+                self.original_num_channels = img.shape[3]
 
             # =========================================================
             # 2. UNIVERSAL PIPELINE (Format-Agnostic from here down)
@@ -1133,7 +1174,7 @@ class PreProcessingTab(ttk.Frame):
             
             # Default UI Palette (Reordered to standard microscopy: Blue, Green, Red)
             palette = [
-                ((0, 0, 255), "#0000FF"),   # 0: Blue (Usually DAPI)
+                ((0, 0, 255), "#0000FF"),   # 0: Blue 
                 ((0, 255, 0), "#00FF00"),   # 1: Green
                 ((255, 0, 0), "#FF0000"),   # 2: Red
                 ((0, 255, 255), "#00FFFF"), # 3: Cyan
@@ -1141,6 +1182,13 @@ class PreProcessingTab(ttk.Frame):
                 ((255, 255, 0), "#FFFF00"), # 5: Yellow
                 ((255, 255, 255), "#FFFFFF")# 6: White
             ]
+
+            # --- SMART SINGLE-CHANNEL OVERRIDE ---
+            # If the image is just 1 channel, default to Green instead of Blue
+            if c_total == 1:
+                palette[0] = ((0, 255, 0), "#00FF00") 
+                # Note: If you ever prefer raw data to look Grayscale, 
+                # just change the line above to: ((255, 255, 255), "#FFFFFF")
 
             # Generate the exact list of UI channels to match the matrix dimension
             for c in range(c_total):
@@ -1231,6 +1279,11 @@ class PreProcessingTab(ttk.Frame):
     def apply_image_math(self, image_multi, current_z=None):
         """Processes contrast and brightness dynamically for N channels."""
         import numpy as np
+        
+        # --- THE FIX: Restore missing channel dimension squashed by cv2.resize ---
+        if image_multi.ndim == 2:
+            image_multi = image_multi[:, :, np.newaxis]
+            
         h, w, c_total = image_multi.shape
         
         # If no Z index is provided, default to the slider's current position
@@ -1246,6 +1299,7 @@ class PreProcessingTab(ttk.Frame):
         channel_names = list(self.channel_vars.keys())
         processed_channels = []
 
+        # ... (keep the rest of your apply_image_math loop exactly the same) ...
         for i, ch_name in enumerate(channel_names):
             if i >= c_total: 
                 processed_channels.append(np.zeros((h, w), dtype=np.float32))
