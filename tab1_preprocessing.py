@@ -129,72 +129,59 @@ class PreProcessingTab(ttk.Frame):
         proj_frame.grid_columnconfigure(2, weight=1)
 
         # ---------------------------------------------------------
-        # Channel Visibility
+        # Channel Visibility & Pseudo-Color (Dynamic Containers)
         # ---------------------------------------------------------
-        chan_frame = tk.LabelFrame(control_frame, text="Channel Visibility & Pseudo-Color", padx=10, pady=5)
-        chan_frame.pack(fill=tk.X, pady=2)
+        self.chan_frame = tk.LabelFrame(control_frame, text="Channel Visibility & Pseudo-Color", padx=10, pady=5)
+        self.chan_frame.pack(fill=tk.X, pady=2)
         
-        self.var_ch_r = tk.BooleanVar(value=True)
-        self.var_ch_g = tk.BooleanVar(value=True)
-        self.var_ch_b = tk.BooleanVar(value=True)
-
-        self.color_r = (255, 0, 0)   # Default Pure Red
-        self.color_g = (0, 255, 0)   # Default Pure Green
-        self.color_b = (0, 0, 255)   # Default Pure Blue
-        # --------------------------------------------
-
-        self.btn_color_r, self.lbl_ch_r = self.create_channel_row(chan_frame, "Alexa Fluor 568 (Red)", self.var_ch_r, "R", "#FF0000")
-        self.btn_color_g, self.lbl_ch_g = self.create_channel_row(chan_frame, "Alexa Fluor 488 (Green)", self.var_ch_g, "G", "#00FF00")
-        self.btn_color_b, self.lbl_ch_b = self.create_channel_row(chan_frame, "DAPI (Blue)", self.var_ch_b, "B", "#0000FF")
-
+        # Dictionaries to hold N-channel variables dynamically
+        self.channel_vars = {}    # Maps name -> tk.BooleanVar()
+        self.channel_colors = {}  # Maps name -> (R, G, B) tuple
+        self.channel_widgets = [] # Tracks UI rows so we can clear them on new image load
+        
         # ---------------------------------------------------------
         # Channel Adjustments (Compact)
         # ---------------------------------------------------------
         adj_frame = tk.LabelFrame(control_frame, text="Channel Adjustments", padx=10, pady=5)
         adj_frame.pack(fill=tk.X, pady=2)
 
-        # --- NEW: Toggle to bypass B/C & Dynamic Range ---
         self.var_apply_adjustments = tk.BooleanVar(value=True)
         tk.Checkbutton(adj_frame, text="Apply Adjustments & Range Expansion", variable=self.var_apply_adjustments, command=self.update_preview).pack(fill=tk.X, pady=(0,5))
         
-        # Data dictionary to remember the user's settings for each channel
-        self.adj_data = {
-            "Red (Alexa 568)": {"c": 1.0, "b": 0.0},
-            "Green (Alexa 488)": {"c": 1.0, "b": 0.0},
-            "Blue (DAPI)": {"c": 1.0, "b": 0.0}
-        }
-        self.active_adj_channel = tk.StringVar(value="Red (Alexa 568)")
-        self._is_updating_ui = False # Flag to prevent feedback loops
+        # Data dictionary for dynamic sliders
+        self.adj_data = {} 
+        self.active_adj_channel = tk.StringVar()
+        self._is_updating_ui = False 
         
-        # Dropdown to select the channel (Uses PACK)
-        self.combo_channel = ttk.Combobox(adj_frame, textvariable=self.active_adj_channel, values=list(self.adj_data.keys()), state="readonly")
+        # Dropdown (Values will be populated dynamically)
+        self.combo_channel = ttk.Combobox(adj_frame, textvariable=self.active_adj_channel, state="readonly")
         self.combo_channel.pack(fill=tk.X, pady=(0, 5))
         self.combo_channel.bind("<<ComboboxSelected>>", self.on_adj_channel_change)
         
-        # Sub-frame for sliders (Uses PACK inside adj_frame)
+        # Sub-frame for sliders
         slider_frame = tk.Frame(adj_frame)
         slider_frame.pack(fill=tk.X)
-        
-        # Configure columns so both sliders get equal horizontal space
         slider_frame.columnconfigure(1, weight=1)
         slider_frame.columnconfigure(3, weight=1)
         
-        # Contrast Slider (C:) - Side by side!
+        # Contrast Slider
         tk.Label(slider_frame, text="C:", font=("Arial", 9, "bold"), fg="gray").grid(row=0, column=0, sticky="e")
         self.scale_contrast = tk.Scale(slider_frame, from_=0.0, to=5.0, resolution=0.05, orient=tk.HORIZONTAL, 
-                                       command=self.on_shared_slider_move, 
-                                       width=10, sliderlength=15) # Made thinner & less chunky
+                                       command=self.on_shared_slider_move, width=10, sliderlength=15)
         self.scale_contrast.grid(row=0, column=1, sticky="ew", padx=(0, 5))
         
-        # Brightness Slider (B:) - Side by side!
+        # Brightness Slider
         tk.Label(slider_frame, text="B:", font=("Arial", 9, "bold"), fg="gray").grid(row=0, column=2, sticky="e")
         self.scale_brightness = tk.Scale(slider_frame, from_=-1.0, to=1.0, resolution=0.05, orient=tk.HORIZONTAL, 
-                                         command=self.on_shared_slider_move, 
-                                         width=10, sliderlength=15) # Made thinner & less chunky
+                                         command=self.on_shared_slider_move, width=10, sliderlength=15)
         self.scale_brightness.grid(row=0, column=3, sticky="ew", padx=(0, 2))
         
-        # Initialize sliders
-        self.on_adj_channel_change()
+        # Call this once during init to set up defaults (optional, can wait until image load)
+        self.build_dynamic_channels([
+            {"name": "Red (Alexa 568)", "hex": "#FF0000", "rgb": (255, 0, 0)},
+            {"name": "Green (Alexa 488)", "hex": "#00FF00", "rgb": (0, 255, 0)},
+            {"name": "Blue (DAPI)", "hex": "#0000FF", "rgb": (0, 0, 255)}
+        ])
 
         # ---------------------------------------------------------
         # --- Scale Bar Overlay ---
@@ -488,6 +475,53 @@ class PreProcessingTab(ttk.Frame):
         # Call your existing image update function!
         # (Change this to self.update_preview() if that's what Tab 1 uses)
         self.on_slider_move()
+
+    def build_dynamic_channels(self, channel_list):
+        """
+        Dynamically rebuilds the UI for N channels. 
+        Expects a list of dicts: [{'name': 'DAPI', 'hex': '#0000FF', 'rgb': (0,0,255)}, ...]
+        """
+        # 1. Clear existing UI rows
+        for widget in self.channel_widgets:
+            widget.destroy()
+        self.channel_widgets.clear()
+        
+        self.channel_vars.clear()
+        self.channel_colors.clear()
+        self.adj_data.clear()
+        
+        channel_names = []
+
+        # 2. Build new UI rows
+        for ch in channel_list:
+            ch_name = ch["name"]
+            hex_col = ch["hex"]
+            
+            # Setup State Variables
+            self.channel_vars[ch_name] = tk.BooleanVar(value=True)
+            self.channel_colors[ch_name] = ch["rgb"]
+            self.adj_data[ch_name] = {"c": 1.0, "b": 0.0}
+            channel_names.append(ch_name)
+            
+            # Create the UI Row (Modify this if your create_channel_row returns different things)
+            # We append the parent frame/widgets to self.channel_widgets so we can destroy them later
+            row_frame = tk.Frame(self.chan_frame)
+            row_frame.pack(fill=tk.X, pady=2)
+            self.channel_widgets.append(row_frame)
+            
+            # Visibility Checkbox
+            chk = tk.Checkbutton(row_frame, text=ch_name, variable=self.channel_vars[ch_name], command=self.update_preview)
+            chk.pack(side=tk.LEFT)
+            
+            # Color Button (Assuming you want to change it later)
+            btn_color = tk.Button(row_frame, bg=hex_col, width=2)
+            btn_color.pack(side=tk.RIGHT, padx=5)
+            
+        # 3. Update Adjustments Combobox
+        self.combo_channel.config(values=channel_names)
+        if channel_names:
+            self.combo_channel.current(0)
+            self.on_adj_channel_change()
 
     # --- Pseudo Coloring Color Picker ---
     def pick_color(self, channel_id):
@@ -1025,21 +1059,19 @@ class PreProcessingTab(ttk.Frame):
             if file_path.lower().endswith('.czi'):
                 import czifile
                 import numpy as np
-                # ... (Keep your CZI extraction code exactly as it is) ...
 
             elif file_path.lower().endswith('.lif'):
                 from readlif.reader import LifFile
                 import numpy as np
                 
                 lif = LifFile(file_path)
-                lif_img = lif.get_image(series_idx) # LOAD SPECIFIC SERIES HERE!
+                lif_img = lif.get_image(series_idx) 
                 
                 z_slices = lif_img.info.get('z', 1)
                 c_channels = lif_img.info.get('channels', 1)
                 dims = lif_img.info.get('dims', (1, 1, 1, 1, 1))
                 x_dim, y_dim = dims[0], dims[1]
                 
-                # Pre-allocate universal ZYXC array
                 img = np.zeros((z_slices, y_dim, x_dim, c_channels), dtype=np.uint16)
                 
                 for z in range(z_slices):
@@ -1049,9 +1081,8 @@ class PreProcessingTab(ttk.Frame):
                         
                 self.original_num_channels = c_channels
                 
-                # --- DYNAMIC CHANNEL MAPPING FROM XML ---
-                self.czi_channel_map = {'R': None, 'G': None, 'B': None}
-                
+                # --- EXTRACT EXACT CHANNEL DATA FOR THE DYNAMIC UI ---
+                self._temp_extracted_channels = []
                 try:
                     root = lif.xml_root
                     img_name = lif_img.name
@@ -1062,28 +1093,31 @@ class PreProcessingTab(ttk.Frame):
                             for c_idx, ch_node in enumerate(channel_nodes):
                                 if c_idx >= c_channels: break
                                 
-                                c_name = (ch_node.get("Name") or ch_node.get("LUTName") or "").lower()
+                                ch_info = {}
+                                c_name = ch_node.get("Name") or ch_node.get("LUTName")
+                                if c_name: ch_info["name"] = c_name
                                 
-                                if "blue" in c_name or "dapi" in c_name:
-                                    self.czi_channel_map['B'] = c_idx
-                                elif "green" in c_name or "fitc" in c_name or "gfp" in c_name:
-                                    self.czi_channel_map['G'] = c_idx
-                                elif "red" in c_name or "tritc" in c_name or "cy" in c_name or "alexa" in c_name:
-                                    self.czi_channel_map['R'] = c_idx
+                                raw_color_val = ch_node.get("Color")
+                                if raw_color_val:
+                                    try:
+                                        int_color = int(raw_color_val)
+                                        if int_color < 0: int_color = (1 << 32) + int_color
+                                        # Decode Leica's 32-bit signed integer color to RGB
+                                        r = (int_color >> 16) & 0xFF
+                                        g = (int_color >> 8) & 0xFF
+                                        b = int_color & 0xFF
+                                        ch_info["rgb"] = (r, g, b)
+                                        ch_info["hex"] = f"#{r:02X}{g:02X}{b:02X}"
+                                    except ValueError:
+                                        pass
+                                self._temp_extracted_channels.append(ch_info)
                 except Exception as meta_err:
                     print(f"Warning: LIF XML channel mapping failed: {meta_err}")
-
-                # --- SMART SEQUENTIAL FAILSAFE ---
-                mapped_indices = [v for v in self.czi_channel_map.values() if v is not None]
-                unmapped_indices = [i for i in range(c_channels) if i not in mapped_indices]
-                
-                for color_key in ['R', 'G', 'B']:
-                    if self.czi_channel_map[color_key] is None and unmapped_indices:
-                        self.czi_channel_map[color_key] = unmapped_indices.pop(0)
 
             else:
                 import tifffile
                 import numpy as np
+                # ... (Keep TIFF extraction code exactly as it is) ...
                 img = tifffile.imread(file_path)
                 img = np.squeeze(img)
                 if img.ndim == 3: img = img[np.newaxis, ...]
@@ -1094,8 +1128,56 @@ class PreProcessingTab(ttk.Frame):
             # 2. UNIVERSAL PIPELINE (Format-Agnostic from here down)
             # =========================================================
             
-            # Map into exactly 3 color channels (RGB)
-            img = self.stack_rgb_image(img)
+            c_total = img.shape[3]
+            dynamic_channel_list = []
+            
+            # Default UI Palette (Reordered to standard microscopy: Blue, Green, Red)
+            palette = [
+                ((0, 0, 255), "#0000FF"),   # 0: Blue (Usually DAPI)
+                ((0, 255, 0), "#00FF00"),   # 1: Green
+                ((255, 0, 0), "#FF0000"),   # 2: Red
+                ((0, 255, 255), "#00FFFF"), # 3: Cyan
+                ((255, 0, 255), "#FF00FF"), # 4: Magenta
+                ((255, 255, 0), "#FFFF00"), # 5: Yellow
+                ((255, 255, 255), "#FFFFFF")# 6: White
+            ]
+
+            # Generate the exact list of UI channels to match the matrix dimension
+            for c in range(c_total):
+                name = f"Channel {c+1}"
+                rgb, hex_str = palette[c % len(palette)]
+                
+                # Apply specific metadata if we extracted it during loading
+                if hasattr(self, '_temp_extracted_channels') and c < len(self._temp_extracted_channels):
+                    ch_meta = self._temp_extracted_channels[c]
+                    name = ch_meta.get("name", name)
+                    
+                    # If hardware provided an exact color, use it
+                    if "rgb" in ch_meta:
+                        rgb = ch_meta["rgb"]
+                        hex_str = ch_meta["hex"]
+                    else:
+                        # SMART FALLBACK: If we have a name but no hardware color, guess it!
+                        lower_name = name.lower()
+                        if any(k in lower_name for k in ["blue", "dapi", "hoechst"]):
+                            rgb, hex_str = (0, 0, 255), "#0000FF"
+                        elif any(k in lower_name for k in ["green", "fitc", "gfp", "alexa 488"]):
+                            rgb, hex_str = (0, 255, 0), "#00FF00"
+                        elif any(k in lower_name for k in ["red", "tritc", "cy3", "cy5", "alexa 5"]):
+                            rgb, hex_str = (255, 0, 0), "#FF0000"
+                    
+                dynamic_channel_list.append({
+                    "name": name,
+                    "rgb": rgb,
+                    "hex": hex_str
+                })
+
+            # ---> TRIGGER THE UI TO REBUILD ITSELF FOR N CHANNELS <---
+            self.build_dynamic_channels(dynamic_channel_list)
+            
+            # Clean up temp memory so it doesn't bleed into the next image!
+            if hasattr(self, '_temp_extracted_channels'):
+                del self._temp_extracted_channels
 
             # Initialize rendering matrices
             self.original_raw_volume = img.astype(np.float32)
@@ -1108,7 +1190,7 @@ class PreProcessingTab(ttk.Frame):
             self.z_percentiles = {}
             for z in range(self.max_z + 1):
                 self.z_percentiles[z] = []
-                for c in range(min(3, img.shape[3])): 
+                for c in range(c_total):  
                     ch_data_sampled = self.raw_volume[z, ::4, ::4, c]
                     p_min, p_max = np.percentile(ch_data_sampled, (1.0, 99.9))
                     val_range = float(p_max - p_min) if (p_max - p_min) > 0 else 1.0
@@ -1147,47 +1229,53 @@ class PreProcessingTab(ttk.Frame):
 
     # --- Processing ---
     def apply_image_math(self, image_multi, current_z=None):
-        """Processes contrast and brightness using cached percentile values."""
+        """Processes contrast and brightness dynamically for N channels."""
         import numpy as np
         h, w, c_total = image_multi.shape
         
         # If no Z index is provided, default to the slider's current position
         if current_z is None and hasattr(self, 'scale_z'):
-            current_z = int(self.scale_z.get())
+            current_z = int(float(self.scale_z.get()))
         elif current_z is None:
             current_z = 0
 
-        # --- NEW: Check if adjustments should be bypassed ---
         var_adj = getattr(self, 'var_apply_adjustments', None)
         apply_adj = var_adj.get() if var_adj is not None else True
-
-        channel_params = [
-            (self.adj_data["Red (Alexa 568)"]["c"], self.adj_data["Red (Alexa 568)"]["b"], self.var_ch_r.get()),
-            (self.adj_data["Green (Alexa 488)"]["c"], self.adj_data["Green (Alexa 488)"]["b"], self.var_ch_g.get()),
-            (self.adj_data["Blue (DAPI)"]["c"], self.adj_data["Blue (DAPI)"]["b"], self.var_ch_b.get())
-        ]
         
+        # Get the names of the channels currently built in the UI
+        channel_names = list(self.channel_vars.keys())
         processed_channels = []
 
-        for i, (contrast, brightness, is_visible) in enumerate(channel_params):
-            if not is_visible or i >= c_total: 
+        for i, ch_name in enumerate(channel_names):
+            if i >= c_total: 
                 processed_channels.append(np.zeros((h, w), dtype=np.float32))
                 continue
             
+            is_visible = self.channel_vars[ch_name].get()
+            contrast = self.adj_data[ch_name]["c"]
+            brightness = self.adj_data[ch_name]["b"]
+
             ch_data = image_multi[:, :, i].astype(np.float32)
 
-            # --- NEW: Raw display bypass skips percentiles and contrast ---
+            # --- Raw display bypass ---
             if not apply_adj:
-                norm_ch = ch_data / 65535.0
-                norm_ch = np.clip(norm_ch, 0.0, 1.0)
-                processed_channels.append(norm_ch)
+                if not is_visible:
+                    processed_channels.append(np.zeros((h, w), dtype=np.float32))
+                else:
+                    norm_ch = ch_data / 65535.0
+                    norm_ch = np.clip(norm_ch, 0.0, 1.0)
+                    processed_channels.append(norm_ch)
                 continue
             
-            # Pull from cache if available (Correctly unpacking p_min and val_range!)
+            # --- Invisible bypass ---
+            if not is_visible:
+                processed_channels.append(np.zeros((h, w), dtype=np.float32))
+                continue
+            
+            # Pull from cache if available
             if hasattr(self, 'z_percentiles') and current_z in self.z_percentiles and i < len(self.z_percentiles[current_z]):
                 p_min, val_range = self.z_percentiles[current_z][i]
             else:
-                # Quick vector calculation fallback if cache isn't available
                 p_min, p_max = np.percentile(ch_data, (1.0, 99.9))
                 val_range = (p_max - p_min) if (p_max - p_min) > 0 else 1.0
             
@@ -1199,23 +1287,26 @@ class PreProcessingTab(ttk.Frame):
             
             processed_channels.append(norm_ch)
 
-        return self.apply_pseudo_colors(processed_channels[0], processed_channels[1], processed_channels[2])
+        # Pass the entire list of processed channels natively!
+        return self.apply_pseudo_colors(processed_channels)
 
-    def apply_pseudo_colors(self, norm_r, norm_g, norm_b):
-        """Blends 3 normalized grayscale arrays (0.0 to 1.0) using the chosen UI colors via ultra-fast vector math."""
+    def apply_pseudo_colors(self, processed_channels):
+        """Blends an arbitrary number of normalized arrays dynamically using UI colors."""
         import numpy as np
         
-        # 1. Stack the 3 separate 2D grayscale channels into a single (H, W, 3) matrix
-        stacked_channels = np.stack([norm_r, norm_g, norm_b], axis=-1)
+        # 1. Stack the dynamic list of N channels into a single (H, W, N) matrix
+        stacked_channels = np.stack(processed_channels, axis=-1)
         
-        # 2. Build a transformation matrix from your UI colors
-        color_matrix = np.array([self.color_r, self.color_g, self.color_b], dtype=np.float32)
+        # 2. Build transformation matrix directly from our dynamic color dictionary
+        channel_names = list(self.channel_vars.keys())
+        colors = [self.channel_colors[name] for name in channel_names[:len(processed_channels)]]
         
-        # If UI colors are 0-1 normalized float weights, scale them up to RGB 255 values
+        color_matrix = np.array(colors, dtype=np.float32)
+        
         if color_matrix.max() <= 1.0 and color_matrix.max() > 0:
             color_matrix = color_matrix * 255.0
 
-        # 3. Fast matrix dot product
+        # 3. Fast matrix dot product: (H, W, N) matrix * (N, 3) color weights -> (H, W, 3) RGB Image
         blended = np.dot(stacked_channels, color_matrix)
             
         # 4. Safe clip and cast to 8-bit image array
