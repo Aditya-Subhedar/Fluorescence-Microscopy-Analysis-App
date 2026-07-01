@@ -850,8 +850,8 @@ class PreProcessingTab(ttk.Frame):
         from tkinter import filedialog
         
         file_paths = filedialog.askopenfilenames(
-            title="Select Microscopy Images (CZI, LIF, TIFF, ND2)", 
-            filetypes=[("Microscopy Files", "*.czi *.lif *.tif *.tiff *.nd2")]
+            title="Select Microscopy Images (CZI, LIF, TIFF, ND2, OIB)", 
+            filetypes=[("Microscopy Files", "*.czi *.lif *.tif *.tiff *.nd2 *.oib")]
         )
         if not file_paths: return
 
@@ -906,7 +906,6 @@ class PreProcessingTab(ttk.Frame):
         if hasattr(self, 'current_file_index') and self.current_file_index < len(self.loaded_files) - 1:
             self.current_file_index += 1
             self.load_image_from_index()
-
     
     def get_lif_pixel_size_um(self, file_path, series_idx=0):
         """Extracts the physical X-axis pixel size in micrometers from a specific LIF series."""
@@ -990,99 +989,133 @@ class PreProcessingTab(ttk.Frame):
             # 1. FORMAT-SPECIFIC EXTRACTION (Translating to ZYXC Numpy)
             # =========================================================
             if file_path.lower().endswith('.czi'):
-                import czifile
+                from pylibCZIrw import czi as pyczi
                 import numpy as np
-                import xml.etree.ElementTree as ET
 
-                with czifile.CziFile(file_path) as czi:
-                    img_raw = czi.asarray()
-                    axes = list(czi.axes)  # e.g., 'BCZYX0' or 'STCZYX0'
-                    shape = list(img_raw.shape)
-                    
-                    # --- 1. Extract Dynamic Channel Metadata ---
-                    channel_list = []
-                    try:
-                        metadata_xml = czi.metadata()
-                        if metadata_xml:
-                            root = ET.fromstring(metadata_xml)
-                            # CZI structure usually keeps channels under Dimensions -> Channels
-                            channels = root.findall('.//Dimensions/Channels/Channel')
-                            
-                            for c_idx, ch in enumerate(channels):
-                                ch_info = {}
-                                ch_info['name'] = ch.get('Name') or ch.findtext('Name') or f"Channel {c_idx + 1}"
-                                
-                                mapped = False
-                                wave_str = ch.findtext('EmissionWavelength')
-                                
-                                # 1a. Try mapping by Wavelength first (Your original logic)
-                                if wave_str:
-                                    try:
-                                        wave = float(wave_str)
-                                        if 0 < wave < 1.0: wave *= 1e9  # Convert meters to nm
-                                        
-                                        if wave < 480:
-                                            ch_info['rgb'], ch_info['hex'] = (0, 0, 255), "#0000FF"
-                                            mapped = True
-                                        elif 480 <= wave < 550:
-                                            ch_info['rgb'], ch_info['hex'] = (0, 255, 0), "#00FF00"
-                                            mapped = True
-                                        elif wave >= 550:
-                                            ch_info['rgb'], ch_info['hex'] = (255, 0, 0), "#FF0000"
-                                            mapped = True
-                                    except ValueError:
-                                        pass
-                                
-                                # 1b. Smart Failsafe: Zeiss Color Hex (#AARRGGBB)
-                                if not mapped:
-                                    color_hex = ch.findtext('Color')
-                                    if color_hex and color_hex.startswith('#') and len(color_hex) >= 9:
-                                        try:
-                                            r = int(color_hex[3:5], 16)
-                                            g = int(color_hex[5:7], 16)
-                                            b = int(color_hex[7:9], 16)
-                                            ch_info['rgb'] = (r, g, b)
-                                            ch_info['hex'] = f"#{r:02X}{g:02X}{b:02X}"
-                                        except ValueError:
-                                            pass
-                                            
-                                channel_list.append(ch_info)
-                    except Exception as meta_err:
-                        print(f"Warning: CZI metadata read failed: {meta_err}")
+                with pyczi.open_czi(file_path) as czidoc:
+                    total_dims = czidoc.total_bounding_box
+                    metadata_dict = czidoc.metadata
+
+                    # Helper Function for Recursive XML Element Search
+                    def find_keys(data, target_key):
+                        found = []
+                        if isinstance(data, dict):
+                            for key, value in data.items():
+                                if key == target_key:
+                                    if isinstance(value, list):
+                                        found.extend(value)
+                                    else:
+                                        found.append(value)
+                                else:
+                                    found.extend(find_keys(value, target_key))
+                        elif isinstance(data, list):
+                            for item in data:
+                                found.extend(find_keys(item, target_key))
+                        return found
+
+                    # --- 1. Extract Channels & UI Palette ---
+                    raw_channels = find_keys(metadata_dict, 'Channel')
+                    unique_channels_dict = {}
+                    fallback_idx = 0
+
+                    for ch in raw_channels:
+                        # Prioritize nodes containing valid Channel Index IDs
+                        c_id_raw = ch.get("@Id") or ch.get("Id")
+                        c_name = ch.get("@Name") or ch.get("Name") or f"Channel {fallback_idx + 1}"
+                        raw_color = ch.get("Color") or "Unknown"
+                        
+                        # Extract clean Index position from structural strings like "Channel:0"
+                        if c_id_raw and "Channel:" in str(c_id_raw):
+                            try:
+                                c_idx = int(str(c_id_raw).split(":")[-1])
+                            except ValueError:
+                                c_idx = fallback_idx
+                        else:
+                            c_idx = fallback_idx
+
+                        # Standardize CZI alpha channel colors (#AARRGGBB) to web standard #RRGGBB
+                        hex_color = "Unknown"
+                        if raw_color != "Unknown" and str(raw_color).startswith("#"):
+                            clean_color = str(raw_color).strip()
+                            if len(clean_color) == 9:  # Remove Alpha channel bytes
+                                hex_color = "#" + clean_color[3:]
+                            else:
+                                hex_color = clean_color
+
+                        # Keep entries containing valid indices or detailed wavelength info
+                        if c_idx not in unique_channels_dict or ch.get("EmissionWavelength"):
+                            unique_channels_dict[c_idx] = {
+                                "name": c_name,
+                                "hex": hex_color.upper()
+                            }
+                        fallback_idx += 1
+
+                    # Convert tracking dict into a sorted index list block
+                    channel_list = [unique_channels_dict[k] for k in sorted(unique_channels_dict.keys())]
+
+                    if not channel_list:
+                        num_channels = total_dims.get('C', (0, 1))[1]
+                        for c_idx in range(num_channels):
+                            channel_list.append({"name": f"Channel {c_idx + 1}", "hex": "Unknown"})
 
                     self._temp_extracted_channels = channel_list
 
-                    # --- 2. Robust Dimension Slicing ---
-                    # We dynamically slice based on the axes string provided by czifile
-                    slices = []
-                    remaining_dims = []
+                    # --- 2. Extract Microscopic Calibration (Scale) ---
+                    raw_distances = find_keys(metadata_dict, 'Distance')
+                    microns_x = None
+                    microns_y = None
                     
-                    for dim, size in zip(axes, shape):
-                        if dim in ['Z', 'C', 'Y', 'X']:
-                            slices.append(slice(None))  # Keep these dimensions intact
-                            remaining_dims.append(dim)
-                        elif dim == 'S':  # Scene / Position
-                            slices.append(min(series_idx, size - 1))
-                        elif dim == 'T':  # Time
-                            slices.append(0)  # Default to first timepoint for now
-                        else:
-                            slices.append(0)  # Squash blocks, mosaics, or dummy '0' dims
+                    for dist in raw_distances:
+                        axis_id = dist.get("@Id") or dist.get("Id")
+                        val_str = dist.get("Value")
+                        
+                        if axis_id and val_str:
+                            try:
+                                val_meters = float(val_str)
+                                val_um = round(val_meters * 1e6, 5)  # Convert to micrometers
+                                
+                                if str(axis_id).upper() == 'X':
+                                    microns_x = val_um
+                                elif str(axis_id).upper() == 'Y':
+                                    microns_y = val_um
+                            except ValueError:
+                                pass
+
+                    if microns_x is not None:
+                        self.microns_per_pixel_x = microns_x
+                        self.microns_per_pixel_y = microns_y
+
+                    # --- 3. Robust Dimension Slicing & Array Building ---
+                    z_start, z_len = total_dims.get('Z', (0, 1))
+                    c_start, c_len = total_dims.get('C', (0, 1))
+                    t_start, t_len = total_dims.get('T', (0, 1))
+                    s_start, s_len = total_dims.get('S', (0, 1))
+                    y_start, y_len = total_dims.get('Y', (0, 0))
+                    x_start, x_len = total_dims.get('X', (0, 0))
+
+                    # Initialize standard ZYXC target array
+                    # Defaulting to float32 or uint16 to accommodate typical CZI bit depths safely
+                    img = np.zeros((z_len, y_len, x_len, c_len), dtype=np.uint16)
+
+                    # Lock into the active multi-point scene using the app's series_idx
+                    active_scene = s_start + min(series_idx, s_len - 1)
+
+                    # Systematically query specific physical planes and map them to our numpy block
+                    for z_idx in range(z_len):
+                        for c_idx in range(c_len):
+                            plane_coords = {
+                                'S': active_scene,
+                                'T': t_start,  # Force default to 1st time point
+                                'Z': z_start + z_idx,
+                                'C': c_start + c_idx
+                            }
                             
-                    img_block = img_raw[tuple(slices)]
+                            # Read plane data (pylibCZIrw typically returns shape Y, X, C)
+                            plane_data = czidoc.read(plane=plane_coords)
+                            
+                            # Strip out any dimension padding natively applied by the reader
+                            img[z_idx, :, :, c_idx] = np.squeeze(plane_data)[:y_len, :x_len]
 
-                    # --- 3. Format strictly to (Z, Y, X, C) ---
-                    if 'Z' not in remaining_dims:
-                        img_block = np.expand_dims(img_block, axis=0)
-                        remaining_dims.insert(0, 'Z')
-                    if 'C' not in remaining_dims:
-                        img_block = np.expand_dims(img_block, axis=-1)
-                        remaining_dims.append('C')
-
-                    # Rearrange whatever order czifile gave us into standard ZYXC
-                    target_order = ['Z', 'Y', 'X', 'C']
-                    transpose_indices = [remaining_dims.index(dim) for dim in target_order]
-                    img = np.transpose(img_block, transpose_indices)
-                    
                     self.original_num_channels = img.shape[3]
 
             elif file_path.lower().endswith('.lif'):
@@ -1144,27 +1177,83 @@ class PreProcessingTab(ttk.Frame):
                 import numpy as np
 
                 with nd2.ND2File(file_path) as reader:
-                    # --- 1. Extract Channels safely ---
+                    # --- 1. Extract Microscopic Calibration (Deep Target Fallbacks) ---
+                    microns_x = None
+                    microns_y = None
+                    
+                    # Target A: Pull calibration attached directly to Frame 0
+                    try:
+                        frame_meta = reader.frame_metadata(0)
+                        if hasattr(frame_meta, 'channels') and frame_meta.channels:
+                            f_ch = frame_meta.channels[0]
+                            if hasattr(f_ch, 'volume') and f_ch.volume:
+                                microns_x = round(f_ch.volume.axesCalibration[0], 5)
+                                microns_y = round(f_ch.volume.axesCalibration[1], 5)
+                    except Exception:
+                        pass
+
+                    # Target B: Native structured file attributes
+                    if microns_x is None:
+                        try:
+                            if hasattr(reader, 'attributes') and reader.attributes:
+                                attrs = reader.attributes
+                                if hasattr(attrs, 'pixelToMicron') and attrs.pixelToMicron:
+                                    microns_x = round(attrs.pixelToMicron, 5)
+                                    microns_y = round(attrs.pixelToMicron, 5)
+                        except Exception:
+                            pass
+
+                    # Target C: Text Data Hard-Scraping from Description Summary
+                    if microns_x is None and hasattr(reader, 'text_info') and reader.text_info:
+                        txt_data = reader.text_info.get('description', '')
+                        for line in txt_data.split('\n'):
+                            if any(k in line.lower() for k in ['scale', 'calib', 'μm', 'um']):
+                                words = line.replace(':', ' ').replace('=', ' ').split()
+                                for word in words:
+                                    try:
+                                        if '.' in word and word.replace('.', '', 1).replace('-', '').isdigit():
+                                            val = abs(float(word))
+                                            if 0.0001 < val < 100.0:  # Validation sanity range
+                                                microns_x = round(val, 5)
+                                                microns_y = round(val, 5)
+                                                break
+                                    except ValueError:
+                                        pass
+                                if microns_x is not None:
+                                    break
+
+                    # Bind the extracted calibration to the app
+                    if microns_x is not None:
+                        self.microns_per_pixel_x = microns_x
+                        self.microns_per_pixel_y = microns_y
+
+                    # --- 2. Extract Channels safely ---
                     channel_list = []
                     channels_extracted = False
                     
                     try:
-                        # ND2 library sometimes crashes on reconstructed files when accessing .metadata
                         if hasattr(reader, 'metadata') and reader.metadata and reader.metadata.channels:
                             for c_idx, ch_info in enumerate(reader.metadata.channels):
                                 c_name = ch_info.channel.name if hasattr(ch_info, 'channel') else f"Channel {c_idx + 1}"
                                 hex_color = "Unknown"
-                                if hasattr(ch_info, 'channel') and hasattr(ch_info.channel, 'colorRGB'):
-                                    int_color = ch_info.channel.colorRGB
-                                    if int_color is not None:
-                                        hex_color = f"#{int_color & 0xFFFFFF:06X}"
+                                
+                                if hasattr(ch_info, 'channel') and hasattr(ch_info.channel, 'colorRGB') and ch_info.channel.colorRGB is not None:
+                                    hex_color = f"#{ch_info.channel.colorRGB & 0xFFFFFF:06X}"
+                                
+                                # Wavelength color mapping backup
+                                if hex_color == "Unknown":
+                                    name_lower = c_name.lower()
+                                    if any(k in name_lower for k in ['488', 'gfp', 'fitc', 'alexa488']): hex_color = "#00FF00"
+                                    elif any(k in name_lower for k in ['dapi', '405', 'hoechst']): hex_color = "#0000FF"
+                                    elif any(k in name_lower for k in ['561', '555', 'tritc', 'cy3']): hex_color = "#FF0000"
+                                    elif any(k in name_lower for k in ['647', 'cy5']): hex_color = "#800080"
+                                    
                                 channel_list.append({"name": c_name, "hex": hex_color})
                             channels_extracted = True
                     except Exception as meta_err:
-                        #print(f"Warning: ND2 structured metadata read failed. Using fallback. Reason: {meta_err}")
+                        # Silently catch reconstructed file errors, letting fallback engage
                         pass
 
-                    # Fallback if the metadata block was missing or corrupted
                     if not channels_extracted:
                         num_channels = reader.sizes.get('C', 1)
                         for c_idx in range(num_channels):
@@ -1172,32 +1261,28 @@ class PreProcessingTab(ttk.Frame):
 
                     self._temp_extracted_channels = channel_list
 
-                    # --- 2. Robust Dimension Slicing ---
-                    sizes = reader.sizes  # e.g., {'P': 10, 'T': 1, 'Z': 1, 'C': 1, 'Y': 2048, 'X': 2048}
-                    arr = reader.asarray()
+                    # --- 3. Robust Dimension Slicing ---
+                    img_raw = reader.asarray()
+                    axes = list(reader.sizes.keys())  # e.g., ['P', 'T', 'Z', 'C', 'Y', 'X']
+                    shape = list(img_raw.shape)
                     
                     slices = []
                     remaining_dims = []
                     
-                    # Dynamically slice out the exact image (Position/Series) we want
-                    for dim_name in sizes.keys():
-                        if dim_name in ['Y', 'X']:
-                            slices.append(slice(None)) # Keep full width/height
-                            remaining_dims.append(dim_name)
-                        elif dim_name == 'Z' or dim_name == 'C':
-                            slices.append(slice(None)) # Keep full Z-stack and Channels
-                            remaining_dims.append(dim_name)
-                        elif dim_name == 'P':
-                            slices.append(min(series_idx, sizes['P'] - 1)) # Select specific series
-                        elif dim_name == 'T':
-                            slices.append(0) # Default to first timepoint for now
+                    for dim, size in zip(axes, shape):
+                        if dim in ['Z', 'C', 'Y', 'X']:
+                            slices.append(slice(None))  # Keep target structural dimensions
+                            remaining_dims.append(dim)
+                        elif dim in ['P', 'V']:  # Position / Series / View
+                            slices.append(min(series_idx, size - 1))
+                        elif dim == 'T':  # Time
+                            slices.append(0)
                         else:
-                            slices.append(0) # Squash any unknown dimensions
+                            slices.append(0)
+                            
+                    img_block = img_raw[tuple(slices)]
 
-                    img_block = arr[tuple(slices)]
-
-                    # --- 3. Format strictly to (Z, Y, X, C) ---
-                    # Pad dimensions if the image is missing Z or C
+                    # --- 4. Format strictly to (Z, Y, X, C) ---
                     if 'Z' not in remaining_dims:
                         img_block = np.expand_dims(img_block, axis=0)
                         remaining_dims.insert(0, 'Z')
@@ -1205,10 +1290,108 @@ class PreProcessingTab(ttk.Frame):
                         img_block = np.expand_dims(img_block, axis=-1)
                         remaining_dims.append('C')
 
-                    # Transpose axes safely based on whatever order nd2 handed them to us
                     target_order = ['Z', 'Y', 'X', 'C']
                     transpose_indices = [remaining_dims.index(dim) for dim in target_order]
                     img = np.transpose(img_block, transpose_indices)
+                    
+                    self.original_num_channels = img.shape[3]
+
+            elif file_path.lower().endswith(('.oib', '.oif')):
+                from oiffile import OifFile
+                import numpy as np
+
+                with OifFile(file_path) as oib:
+                    img_raw = oib.asarray()
+                    axes = [a.upper() for a in oib.axes]  # Normalize axes to uppercase
+                    shape = list(img_raw.shape)
+                    dim_map = dict(zip(axes, shape))
+                    main_settings = oib.mainfile
+
+                    # --- 1. Extract Dynamic Channels & UI Palette ---
+                    channel_list = []
+                    num_channels = dim_map.get('C', 1)
+                    default_hex_colors = ["#00FF00", "#FF0000", "#0000FF", "#00FFFF", "#FF00FF", "#FFFF00"]
+
+                    for c_idx in range(num_channels):
+                        ch_key = f'Channel {c_idx + 1} Parameters'
+                        ch_settings = main_settings.get(ch_key, {})
+                        
+                        # Clean up display tags and eliminate blank software 'None' strings
+                        ch_name = ch_settings.get('DyeName') or ch_settings.get('Name')
+                        if not ch_name or str(ch_name).strip().lower() == 'none':
+                            ch_name = f"Channel {c_idx + 1}"
+                        
+                        # Compute signed bit color masks to valid #RRGGBB hex values
+                        hex_color = "Unknown"
+                        try:
+                            raw_color = ch_settings.get('Color')
+                            if raw_color is not None:
+                                val = int(raw_color)
+                                if val < 0:
+                                    val = (1 << 32) + val
+                                hex_color = f"#{val & 0xFFFFFF:06X}"
+                            else:
+                                hex_color = default_hex_colors[c_idx % len(default_hex_colors)]
+                        except Exception:
+                            hex_color = default_hex_colors[c_idx % len(default_hex_colors)]
+
+                        channel_list.append({"name": ch_name, "hex": hex_color})
+
+                    self._temp_extracted_channels = channel_list
+
+                    # --- 2. Extract Spatial Scale/Resolution Metrics ---
+                    for axis_idx, axis_key in [('x', 'Axis 0 Parameters Common'), ('y', 'Axis 1 Parameters Common')]:
+                        axis_data = main_settings.get(axis_key, {})
+                        scale_val = axis_data.get('Scale')
+                        
+                        # Fallback calculation formula if the direct scale parameter is absent
+                        if scale_val is None:
+                            try:
+                                start_pos = float(axis_data.get('StartPosition', 0.0))
+                                end_pos = float(axis_data.get('EndPosition', 0.0))
+                                max_size = float(axis_data.get('MaxSize', 0.0))
+                                
+                                physical_delta = abs(end_pos - start_pos)
+                                if physical_delta > 0 and max_size > 0:
+                                    scale_val = physical_delta / max_size
+                            except (ValueError, TypeError):
+                                scale_val = None
+
+                        if scale_val is not None:
+                            # Binds the resolution metrics securely to your core application attributes
+                            setattr(self, f"microns_per_pixel_{axis_idx}", round(float(scale_val), 5))
+
+                    # --- 3. Robust Dimension Slicing ---
+                    slices = []
+                    remaining_dims = []
+                    
+                    for dim, size in zip(axes, shape):
+                        if dim in ['Z', 'C', 'Y', 'X']:
+                            slices.append(slice(None))  # Keep target structural dimensions intact
+                            remaining_dims.append(dim)
+                        elif dim == 'S':  # Handle multi-position scenes via the current pipeline index
+                            slices.append(min(series_idx, size - 1))
+                        elif dim == 'T':  # Default to first time-point
+                            slices.append(0)
+                        else:
+                            slices.append(0)  # Squash any auxiliary dummy metadata dimensions
+                            
+                    img_block = img_raw[tuple(slices)]
+
+                    # --- 4. Format strictly to (Z, Y, X, C) ---
+                    if 'Z' not in remaining_dims:
+                        img_block = np.expand_dims(img_block, axis=0)
+                        remaining_dims.insert(0, 'Z')
+                    if 'C' not in remaining_dims:
+                        img_block = np.expand_dims(img_block, axis=-1)
+                        remaining_dims.append('C')
+
+                    # Transpose whatever raw dimension order oiffile returns into standard ZYXC
+                    target_order = ['Z', 'Y', 'X', 'C']
+                    transpose_indices = [remaining_dims.index(dim) for dim in target_order]
+                    img = np.transpose(img_block, transpose_indices)
+                    
+                    self.original_num_channels = img.shape[3]
 
             else:
                 import tifffile
