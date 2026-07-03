@@ -15,7 +15,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 
 ### Tab 2: Automated & Manual Quantification
 * **Automated Segmentation:** Utilizes adaptive and Otsu's method thresholding for accurate object detection.
-* **Interactive Filtering:** Real-time analysis sliders to filter objects by Hue Range, Intensity (Min/Max), Area Size (px), and Circularity.
+* **Interactive Filtering:** Real-time analysis sliders to filter objects by Hue Range, Intensity (Min/Max), Area Size (px), and Morphology (isolating cells and fibres).
 * **Pre-Fetch Caching Engine:** Powered by an asynchronous background thread pool (`ThreadPoolExecutor`) that pre-loads adjacent images into RAM, enabling instant image switching with zero file-loading lag.
 * **Smart Window Reset:** Canvas interface equipped with automatic viewport centering on file load and instant 1.0x unzoom snap execution on canvas double-click.
 * **Precision Edit Tools:** Interactive canvas supporting manual pencil/eraser corrections, full state history (Undo/Redo), and automated exports to Microsoft Excel.
