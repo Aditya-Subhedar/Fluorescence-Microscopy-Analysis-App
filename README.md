@@ -6,9 +6,9 @@ This application provides a robust, efficient, and accurate alternative to manua
 
 ## Features
 
-### Tab 1: CZI & Z-Stack Preprocessing
-* **Robust File Support:** Robustly loads complex Zeiss CZI and multi-stack TIF files.
-* **Intelligent Dimension Correction:** Automatically resolves Z-slice/Color-Channel misalignment traps and unstitched mosaic issues inherent in raw python microscopy readers.
+### Tab 1: Microscope Image Preprocessing
+* **Robust File Support:** Robustly loads OME file formats such as OME-TIFF, TIF, CZI (Zeiss), LIF (Leica), ND2 (Nikon), OIB (Olympus) files.
+* **Intelligent Dimension Correction:** Auto range expansion, Multiple Z-stack collapsing methods, Color-Channel pseudocoloring and unstitched mosaic issues inherent in raw python microscopy readers.
 * **Image Management:** Features a multi-image navigation bar supporting `askopenfilenames` (batch select) with keyboard arrow shortcut support (◄/►) for streamlined workflow.
 * **Fluid Viewport Control:** Lag-free interactive canvas supporting precise scroll-wheel zooming and smooth click-and-drag panning.
 * **Fidelity Optimization:** Adaptive hybrid rendering engine that automatically switches processing workloads to match the viewport size, delivering crystal-clear full-resolution details during deep zoom passes without lagging.
@@ -19,7 +19,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 * **Pre-Fetch Caching Engine:** Powered by an asynchronous background thread pool (`ThreadPoolExecutor`) that pre-loads adjacent images into RAM, enabling instant image switching with zero file-loading lag.
 * **Smart Window Reset:** Canvas interface equipped with automatic viewport centering on file load and instant 1.0x unzoom snap execution on canvas double-click.
 * **Precision Edit Tools:** Interactive canvas supporting manual pencil/eraser corrections, full state history (Undo/Redo), and automated exports to Microsoft Excel.
-* **Hardware Calibration Tracking:** Integrated spatial metadata extraction subsystem that decodes embedded OME-TIFF tags and native Zeiss CZI hardware XML parameters to calculate absolute fluorescent surface areas in micrometers ($\mu m^2$).
+* **Hardware Calibration Tracking:** Integrated spatial metadata extraction subsystem that decodes embedded OME-TIFF tags and native Zeiss CZI hardware XML parameters to calculate absolute fluorescent surface areas in micrometers (um2).
 
 ### 📍 Tab 3: Figure Layer Merger & Annotation
 * **Publication Figure Compositing:** Multi-layer alpha-channel blender that combines distinct custom-colored outline masks into a single composite asset.
