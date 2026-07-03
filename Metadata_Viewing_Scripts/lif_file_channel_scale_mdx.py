@@ -114,7 +114,7 @@ def extract_all_images_metadata(file_path):
         return {}
 
 # Run the full container diagnostic manifest
-file_path = r"IHC input images\IISER DATA\Aditya\V6.lif"
+file_path = r"IHC input images\.lif\V6.lif"
 print(f"Analyzing LIF Container: {file_path}\n" + "="*50)
 
 all_images_meta = extract_all_images_metadata(file_path)
