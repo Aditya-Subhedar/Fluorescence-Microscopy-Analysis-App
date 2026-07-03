@@ -82,7 +82,7 @@ class QuantificationTab(ttk.Frame):
         self.btn_select_images = tk.Button(control_frame, text="1. Select Images", command=self.load_files, font=("Arial", 9, "bold"))
         self.btn_select_images.pack(side=tk.LEFT, padx=3)
         
-        self.btn_auto = tk.Button(control_frame, text="Auto Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 9, "bold"))
+        self.btn_auto = tk.Button(control_frame, text="Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 9, "bold"))
         self.btn_auto.pack(side=tk.LEFT, padx=5)
         
         # 2. Drawing Tools Frame
@@ -117,9 +117,21 @@ class QuantificationTab(ttk.Frame):
         self.btn_apply_preset = tk.Button(preset_frame, text="Apply Preset", command=self.show_preset_dropdown, font=("Arial", 9))
         self.btn_apply_preset.pack(side=tk.LEFT, padx=1)
 
-        # 4. Mask Import / Export Frame
+        # 4. ---> NEW: DATA & IMAGE EXPORTS FRAME <---
+        export_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
+        export_frame.pack(side=tk.RIGHT, padx=4)
+        
+        # Export Image Button
+        tk.Button(export_frame, text="🖼️ Export Image", command=self.export_current_image_view, 
+                  font=("Arial", 9, "bold"), fg="white", bg="#0288d1").pack(side=tk.LEFT, padx=1)
+        
+        # Export Data Button
+        tk.Button(export_frame, text="📊 Export Data", command=self.export_excel, 
+                  font=("Arial", 9, "bold"), fg="white", bg="#2e7d32").pack(side=tk.LEFT, padx=1)
+
+        # 5. Mask Import / Export Frame
         mask_io_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
-        mask_io_frame.pack(side=tk.LEFT, padx=4)
+        mask_io_frame.pack(side=tk.RIGHT, padx=4)
         
         tk.Button(mask_io_frame, text="💾 Save Mask", command=self.save_mask_as_png, 
                   bg="#1976d2", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=1)
@@ -130,17 +142,7 @@ class QuantificationTab(ttk.Frame):
         )
         self.btn_apply_mask.pack(side=tk.LEFT, padx=1)
 
-        # 5. ---> NEW: DATA & IMAGE EXPORTS FRAME GROUPED ON LEFT <---
-        export_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
-        export_frame.pack(side=tk.LEFT, padx=4)
         
-        # Export Image Button
-        tk.Button(export_frame, text="🖼️ Export Image", command=self.export_current_image_view, 
-                  font=("Arial", 9, "bold"), fg="white", bg="#0288d1").pack(side=tk.LEFT, padx=1)
-        
-        # Export Data Button
-        tk.Button(export_frame, text="📊 Export Data", command=self.export_excel, 
-                  font=("Arial", 9, "bold"), fg="white", bg="#2e7d32").pack(side=tk.LEFT, padx=1)
 
         # --- SLIDER FRAME ---
         slider_frame = tk.Frame(root_frame, pady=10)
@@ -170,8 +172,11 @@ class QuantificationTab(ttk.Frame):
         # 4. Circularity / Split (Updated to Single Slider)
         circ_frame = tk.Frame(slider_frame)
         circ_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Label(circ_frame, text="Circularity (0=Line, 100=Circle):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
-        self.circ_slider = SingleSlider(circ_frame, width=220, height=25, abs_min=0, abs_max=100, command=self.schedule_update)
+        
+        # Updated Label to reflect the new range to the user
+        tk.Label(circ_frame, text="Morphology (-100=Line, 0=All, 100=Circle):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
+        # Updated abs_min to -100. 
+        self.circ_slider = SingleSlider(circ_frame, width=220, height=25, abs_min=-100, abs_max=100, default_value=0, command=self.schedule_update)
         self.circ_slider.pack(fill=tk.X, pady=5)
 
         # Canvas
@@ -716,48 +721,78 @@ class QuantificationTab(ttk.Frame):
                 lower_bound = np.array([h_min, 30, v_min]) 
                 upper_bound = np.array([h_max, 255, v_max])
                 
-                # ---> FIXED: Restored the missing bit-range image filtering line <---
                 mask_filtered = cv2.inRange(self.cached_hsv, lower_bound, upper_bound)
                 
-                # 1. Base noise cleanup
+                # 1. Base noise cleanup (YOUR EXACT CODE)
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                 mask_clean = cv2.morphologyEx(mask_filtered, cv2.MORPH_OPEN, kernel)
                 mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
                 
-                # 2. DYNAMIC FIBER STRIPPING (MORPHOLOGICAL OPENING)
-                circ_min = state.get('circ_min', 0)
-                if circ_min > 0:
-                    k_size = int((circ_min / 100.0) * 20) * 2 + 1 
+                # 2. DYNAMIC MORPHOLOGY (Fibers vs Cells - YOUR EXACT CODE)
+                circ_val = state.get('circ_min', 0)
+                if circ_val != 0:
+                    k_size = int((abs(circ_val) / 100.0) * 20) * 2 + 1 
                     if k_size > 1:
                         dynamic_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
-                        mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_OPEN, dynamic_kernel)
+                        if circ_val > 0:
+                            mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_OPEN, dynamic_kernel)
+                        else:
+                            mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_TOPHAT, dynamic_kernel)
                 
-                mask_final_uint8 = np.uint8(mask_clean)
+                mask_visual_uint8 = np.uint8(mask_clean)
+                
+                # =========================================================
+                # ---> INJECTED LOGIC: SEPARATE ARTIFACTS FROM FIBERS <---
+                # =========================================================
+                if circ_val < 0:
+                    # Bridge the fragmented visual mask into solid lines for logic evaluation ONLY
+                    bridge_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+                    mask_logic_uint8 = cv2.morphologyEx(mask_visual_uint8, cv2.MORPH_CLOSE, bridge_kernel)
+                    ecc_threshold = (abs(circ_val) / 100.0) * 0.85  # Tweakable strictness
+                else:
+                    mask_logic_uint8 = mask_visual_uint8.copy()
+                    ecc_threshold = 0.0
                 
                 if not hasattr(self, 'eraser_permanent_mask') or self.eraser_permanent_mask is None:
-                    self.eraser_permanent_mask = np.zeros_like(mask_final_uint8)
+                    self.eraser_permanent_mask = np.zeros_like(mask_visual_uint8)
                 
-                # Combine the slider thresholds and manual pencil drawings
-                mask_combined = cv2.bitwise_or(mask_final_uint8, self.current_manual_add)
-                mask_combined = cv2.bitwise_and(mask_combined, cv2.bitwise_not(self.eraser_permanent_mask))
-                mask_combined = cv2.bitwise_and(mask_combined, cv2.bitwise_not(self.current_manual_remove))
+                # Combine manual overrides onto LOGIC mask for area/shape evaluation
+                mask_combined_logic = cv2.bitwise_or(mask_logic_uint8, self.current_manual_add)
+                mask_combined_logic = cv2.bitwise_and(mask_combined_logic, cv2.bitwise_not(self.eraser_permanent_mask))
+                mask_combined_logic = cv2.bitwise_and(mask_combined_logic, cv2.bitwise_not(self.current_manual_remove))
                 
-                labeled_mask, _ = measure.label(mask_combined > 0, return_num=True)
-                regions = measure.regionprops(labeled_mask, intensity_image=self.cached_gray)
+                labeled_logic, _ = measure.label(mask_combined_logic > 0, return_num=True)
+                logic_regions = measure.regionprops(labeled_logic)
 
                 valid_labels = []
-                valid_regions = []
-                for r in regions:
+                for r in logic_regions:
                     if min_area_val <= r.area <= max_area_val:
-                        valid_labels.append(r.label)
-                        valid_regions.append(r)
+                        if circ_val < 0:
+                            if r.eccentricity >= ecc_threshold:
+                                valid_labels.append(r.label)
+                        else:
+                            valid_labels.append(r.label)
                 
-                mask_filtered_area = np.isin(labeled_mask, valid_labels).astype(np.uint8) * 255
-                self.current_mask = mask_filtered_area.copy()
+                # Create the approved logic silhouette
+                mask_approved_logic = np.isin(labeled_logic, valid_labels).astype(np.uint8) * 255
                 
-                num_clusters = len(valid_regions)
-                mean_intensity = np.mean([r.intensity_mean for r in valid_regions]) if num_clusters > 0 else 0
-                areas_total = sum([r.area for r in valid_regions])
+                # COOKIE-CUTTER: Keep only your original visual pixels that fall inside approved logic areas
+                mask_final = cv2.bitwise_and(mask_visual_uint8, mask_approved_logic)
+                
+                # Re-apply manual overrides to visual mask so drawings actually show up on screen
+                mask_final = cv2.bitwise_or(mask_final, self.current_manual_add)
+                mask_final = cv2.bitwise_and(mask_final, cv2.bitwise_not(self.eraser_permanent_mask))
+                mask_final = cv2.bitwise_and(mask_final, cv2.bitwise_not(self.current_manual_remove))
+                # =========================================================
+
+                self.current_mask = mask_final.copy()
+                
+                # 3. FINAL STATS CALCULATION (Using visual mask for accurate area data)
+                labeled_final, num_clusters = measure.label(mask_final > 0, return_num=True)
+                final_regions = measure.regionprops(labeled_final, intensity_image=self.cached_gray)
+
+                mean_intensity = np.mean([r.intensity_mean for r in final_regions]) if num_clusters > 0 else 0
+                areas_total = sum([r.area for r in final_regions])
                 area_percentage = (areas_total / total_pixels) * 100 if total_pixels > 0 else 0
 
                 if 'pixel_size_um' not in state:
@@ -779,7 +814,7 @@ class QuantificationTab(ttk.Frame):
                     'mean_intensity': round(mean_intensity, 2)
                 }
 
-                contours, _ = cv2.findContours(mask_filtered_area, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                contours, _ = cv2.findContours(mask_final, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 cv2.drawContours(overlay_rgb, contours, -1, (255, 255, 255), 2)
                 contours_drawn_manually = True
                 
