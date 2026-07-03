@@ -144,7 +144,7 @@ class ColorRangeSlider(tk.Canvas):
 # ---> NEW WIDGET: Single Slider for Circularity/Splitting <---
 class SingleSlider(tk.Canvas):
     """Custom Tkinter Widget for a Single-Pointer Slider"""
-    def __init__(self, parent, width=500, height=40, abs_min=0, abs_max=100, command=None, **kwargs):
+    def __init__(self, parent, width=500, height=40, abs_min=0, abs_max=100, default_value=None, command=None, **kwargs):
         super().__init__(parent, width=width, height=height, bg='gray', highlightthickness=0, **kwargs)
         self.command = command
         self.width = width
@@ -152,11 +152,22 @@ class SingleSlider(tk.Canvas):
         
         self.abs_min = abs_min
         self.abs_max = abs_max
-        self.cur_val = abs_min
+        
+        # Set the initial value based on default_value if provided
+        if default_value is not None:
+            self.cur_val = max(self.abs_min, min(self.abs_max, default_value))
+        else:
+            self.cur_val = abs_min
         
         self._create_background()
         
         self.right_mask = self.create_rectangle(0, 0, width, height, fill="black", stipple="gray50", outline="")
+        
+        # NEW: Draw a center indicator if the range spans across 0
+        self.center_line = None
+        if self.abs_min < 0 < self.abs_max:
+            self.center_line = self.create_line(0, 0, 0, height, fill="white", dash=(2, 2))
+
         self.handle = self.create_polygon(0,0, 0,0, 0,0, fill="white", outline="black", width=1)
         self.val_text = self.create_text(0, height/2, text=str(self.cur_val), fill="white", font=("Arial", 10, "bold"))
         
@@ -203,6 +214,11 @@ class SingleSlider(tk.Canvas):
         
         # Mask everything to the right of the pointer
         self.coords(self.right_mask, x, 0, self.width, self.height)
+        
+        # NEW: Ensure the zero-line stays perfectly aligned on resize/update
+        if self.center_line:
+            zero_x = self._val_to_x(0)
+            self.coords(self.center_line, zero_x, 0, zero_x, self.height)
         
         h_size = 8
         self.coords(self.handle, x-h_size, 0, x+h_size, 0, x, h_size+4)
