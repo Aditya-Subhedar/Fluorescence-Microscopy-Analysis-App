@@ -9,12 +9,12 @@ This application provides a robust, efficient, and accurate alternative to manua
 ### 📍 Tab 1: Microscope Image Preprocessing
 * **Robust File Support:** Robustly loads OME file formats such as OME-TIFF, TIF, CZI (Zeiss), LIF (Leica), ND2 (Nikon), OIB (Olympus) files.
 * **Intelligent Dimension Correction:** Auto range expansion, Multiple Z-stack collapsing methods, Color-Channel pseudocoloring and unstitched mosaic issues inherent in raw python microscopy readers.
-* **Image Management:** Features a multi-image navigation bar supporting `askopenfilenames` (batch select) with keyboard arrow shortcut support (◄/►), traverse z-stack using up-down arrow keys (↑,↓) for streamlined workflow.
+* **Image Management:** Features a multi-image navigation bar supporting `askopenfilenames` (batch select) with keyboard arrow shortcut support (←/→), traverse z-stack using up-down arrow keys (↑,↓) for streamlined workflow.
 * **Fluid Viewport Control:** Lag-free interactive canvas supporting precise scroll-wheel zooming and smooth click-and-drag panning.
 * **Fidelity Optimization:** Adaptive hybrid rendering engine that automatically switches processing workloads to match the viewport size, delivering crystal-clear full-resolution details during deep zoom passes without lagging.
 
 ### 📍 Tab 2: Automated & Manual Quantification
-* **Automated Segmentation:** Utilizes adaptive and Otsu's method thresholding for accurate object detection.
+* **Automated Segmentation:** Utilizes adaptive and Otsu's method thresholding for accurately segmenting fluoroscent regions. Auto detect default values can be changed according to user preferences.
 * **Interactive Filtering:** Real-time analysis sliders to filter objects by Hue Range, Intensity (Min/Max), Area Size (px), and Morphology (isolating cells and fibres).
 * **Batch Processing:** Multiple files can be loaded at once with each preserving its thresholding parameters during switching and upto 20 states for undo and redo operations. Supports .ome.tif, tiff, jpeg, jpg, png files.
 * **Pre-Fetch Caching Engine:** Powered by an asynchronous background thread pool (`ThreadPoolExecutor`) that pre-loads adjacent images into RAM, enabling instant image switching with zero file-loading lag.
