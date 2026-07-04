@@ -16,10 +16,13 @@ This application provides a robust, efficient, and accurate alternative to manua
 ### 📍 Tab 2: Automated & Manual Quantification
 * **Automated Segmentation:** Utilizes adaptive and Otsu's method thresholding for accurate object detection.
 * **Interactive Filtering:** Real-time analysis sliders to filter objects by Hue Range, Intensity (Min/Max), Area Size (px), and Morphology (isolating cells and fibres).
+* **Batch Processing:** Multiple files can be loaded at once with each preserving its thresholding parameters during switching and upto 20 states for undo and redo operations. Supports .ome.tif, tiff, jpeg, jpg, png files.
 * **Pre-Fetch Caching Engine:** Powered by an asynchronous background thread pool (`ThreadPoolExecutor`) that pre-loads adjacent images into RAM, enabling instant image switching with zero file-loading lag.
 * **Smart Window Reset:** Canvas interface equipped with automatic viewport centering on file load and instant 1.0x unzoom snap execution on canvas double-click.
-* **Precision Edit Tools:** Interactive canvas supporting manual pencil/eraser corrections, full state history (Undo/Redo), and automated exports to Microsoft Excel.
+* **Precision Edit Tools:** Interactive canvas supporting manual pencil/eraser corrections with fast ellipse drawing tool, full state history (Undo/Redo), and automated exports to Microsoft Excel.
 * **Hardware Calibration Tracking:** Integrated spatial metadata extraction subsystem that decodes embedded OME-TIFF tags and native Zeiss CZI hardware XML parameters to calculate absolute fluorescent surface areas in micrometers (um2).
+* **Real-Time Fluoroscence Data:** Fluoroscence data is displayed in real time at the bottom with fields "Fluoroscent Area (%)", "Fluoroscent Area (Absolute (um2))", Cluster Count.
+* **Saves Data, Presets, Contours and Overlayed Images:** Quantitative fluoroscent data is for batch of multiple images can be stored in CSV and EXCEL format. Thresholding parameters are stored in a JSON file named "cytoquant_presets.json" which can be accessed through "apply presets button". Contours can be saved in PNG format and superimposed on images. Images with overlayed contours (including manual drawings)can be saved in JPEG, PNG, TIFF (un-compressed)formats.
 
 ### 📍 Tab 3: Figure Layer Merger & Annotation
 * **Publication Figure Compositing:** Multi-layer alpha-channel blender that combines distinct custom-colored outline masks into a single composite asset.
