@@ -1,9 +1,8 @@
-czifile
-pylibCZIrw
-tifffile
-numpy
-opencv-python
-Pillow
-scikit-image
-openpyxl
-pyinstaller  # Needed for compiling to standalone executable (Optional)
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+czifile>=2019.7.2
+tifffile>=2023.8.12
+scikit-image>=0.21.0
+pandas>=2.0.0
+openpyxl>=3.1.2
