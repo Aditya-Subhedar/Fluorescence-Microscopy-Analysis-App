@@ -48,9 +48,9 @@ This application provides a robust, efficient, and accurate alternative to manua
 
 ### 📍 Tab 6: Open Field Test (OFT) Tracking
 * **Adaptive Motion Tracking:** Utilizes a robust background subtraction engine (MOG2) paired with morphological filtering to continuously isolate and track the subject's center of mass across complex lighting environments.
-* **Real-World Spatial Calibration:** Features an interactive 4-point perspective transform matrix (Homography) that maps raw pixel coordinates to physical arena dimensions, ensuring absolute distance accuracy regardless of camera angle distortion.
-* **Kinematic Noise Filtering:** Implements inertial smoothing and velocity deadzones to prevent false distance spikes ("teleportation" artifacts) when a user manually repositions the tracking bounding box during a trial.
-* **Live Behavioral Analytics:** Real-time quantitative computation of total trajectory distance (cm) and central zone spatial preference (time spent in center).
+* **Real-World Spatial Calibration:** Features an interactive 4-point perspective transform matrix (Homography) that maps raw pixel coordinates to physical arena dimensions for both square and circle OFT chambers, distance (length and diameter) of both inner and outer zones of square and circle OFT chambers can be set manually and their geometry adapts automatically ensuring absolute distance accuracy regardless of camera angle distortion.
+* **Kinematic Noise Filtering:** Implements inertial smoothing and velocity deadzones to prevent false distance spikes ("teleportation" artifacts) when a user manually repositions the tracking bounding box during a trial. The tracker inertia and minimum deadzone distance is also adjustable in real time using sliders on the UI.
+* **Live Behavioral Analytics:** Real-time quantitative computation of total trajectory distance (cm), crossover count, and central zone spatial preference (time spent in center).
 * **Fluid Media Controls:** Integrated video playback system featuring global keyboard shortcut bindings (Spacebar for Play/Pause, ◄/► for precise 2-second seeking) safely decoupled from UI widget focus.
 * **Comprehensive Data Export:** Single-click production exports generating both structured quantitative metric tables (`.csv`) and high-contrast spatial trajectory maps (`.png`) for publication figures.
 
