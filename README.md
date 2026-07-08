@@ -1,6 +1,6 @@
 # Fluorescence Microscopy Analysis App
 
-An imaging software providing end to end functionality from raw microsocpe image to publication data and panel generation, desktop-based GUI tool developed to automate the preprocessing, manual correction, quantification of multi-channel fluorescence microscopy images, image annotation and panel generation. 
+An imaging software providing end to end functionality from raw microsocpe image to publication ready data and panel generation. A desktop-based GUI tool developed to automate the preprocessing, manual correction, quantification of multi-channel fluorescence microscopy images, image annotation and panel generation. 
 
 This application provides a robust, efficient, and accurate alternative to manual image analysis workflows (e.g., ImageJ).
 
