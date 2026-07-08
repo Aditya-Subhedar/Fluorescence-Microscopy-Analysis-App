@@ -1,6 +1,6 @@
 # Fluorescence Microscopy Analysis App
 
-A professional-grade, desktop-based GUI tool developed to automate the preprocessing, manual correction, and quantification of multi-channel fluorescence microscopy images. 
+An imaging software providing end to end functionality from raw microsocpe image to publication data and panel generation, desktop-based GUI tool developed to automate the preprocessing, manual correction, quantification of multi-channel fluorescence microscopy images, image annotation and panel generation. 
 
 This application provides a robust, efficient, and accurate alternative to manual image analysis workflows (e.g., ImageJ).
 
@@ -59,10 +59,10 @@ This application provides a robust, efficient, and accurate alternative to manua
 ## 🛠️ Technical Architecture & Stack
 
 * **GUI Engine:** Python `tkinter` + `ttk` widgets
-* **Image Processing Engine:** OpenCV (`cv2`), `scikit-image` (`measure`), NumPy
-* **I/O File Handlers:** Pillow (`PIL`), `czifile`, `pylibCZIrw`, `tifffile`
+* **Image Processing Engine:** OpenCV (`cv2`), `scikit-image` (`filters`, `measure`), NumPy
+* **I/O File Handlers:** Pillow (`PIL`), `czifile`, `tifffile` *(and `pylibCZIrw` if integrated)*
 * **Concurrency Engine:** `threading`, `concurrent.futures`
-* **Data Pipelines:** `pandas`, `openpyxl`
+* **Data Pipelines:** `pandas`, `csv`, `openpyxl`
 
 ## Setup & Installation
 
