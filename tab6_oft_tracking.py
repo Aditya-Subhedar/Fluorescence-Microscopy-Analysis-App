@@ -197,14 +197,35 @@ class OFTTrackingTab(ttk.Frame):
         # -- Col 1: Calibration --
         col1 = ttk.Frame(control_panel, style="OFT_Card.TFrame")
         col1.grid(row=0, column=1, sticky="nsew", padx=5)
-        ttk.Label(col1, text="2. Center Tile Calibration", style="OFT_Header.TLabel").pack(anchor="w", pady=(0,4))
+        ttk.Label(col1, text="2. Arena Calibration", style="OFT_Header.TLabel").pack(anchor="w", pady=(0,2))
         
-        frame_dims = ttk.Frame(col1, style="OFT_Card.TFrame")
-        frame_dims.pack(fill="x", pady=(0,4))
-        ttk.Label(frame_dims, text="Center Length (cm):", background="#ffffff").pack(side="left")
-        self.entry_ref_size = ttk.Entry(frame_dims, width=6, font=("Segoe UI", 10))
-        self.entry_ref_size.insert(0, "48.0")
-        self.entry_ref_size.pack(side="right")
+        # Add target selection variable
+        if not hasattr(self, 'calib_mode'):
+            self.calib_mode = tk.StringVar(value="Outer")
+
+        # Mode Selection Radiobuttons
+        mode_frame = ttk.Frame(col1, style="OFT_Card.TFrame")
+        mode_frame.pack(fill="x", pady=(0,2))
+        ttk.Radiobutton(mode_frame, text="Drag Outer", variable=self.calib_mode, value="Outer", command=self.draw_draggable_poly).pack(side="left", expand=True)
+        ttk.Radiobutton(mode_frame, text="Drag Inner", variable=self.calib_mode, value="Inner", command=self.draw_draggable_poly).pack(side="left", expand=True)
+        
+        # Outer Dimension (Bound to real-time updates)
+        frame_outer = ttk.Frame(col1, style="OFT_Card.TFrame")
+        frame_outer.pack(fill="x", pady=(0,2))
+        ttk.Label(frame_outer, text="Outer Arena (cm):", background="#ffffff").pack(side="left")
+        self.entry_outer_size = ttk.Entry(frame_outer, width=6, font=("Segoe UI", 10))
+        self.entry_outer_size.insert(0, "96.0")
+        self.entry_outer_size.pack(side="right")
+        self.entry_outer_size.bind("<KeyRelease>", lambda e: self.draw_draggable_poly())
+
+        # Inner Dimension (Bound to real-time updates)
+        frame_inner = ttk.Frame(col1, style="OFT_Card.TFrame")
+        frame_inner.pack(fill="x", pady=(0,4))
+        ttk.Label(frame_inner, text="Inner Zone (cm):", background="#ffffff").pack(side="left")
+        self.entry_inner_size = ttk.Entry(frame_inner, width=6, font=("Segoe UI", 10))
+        self.entry_inner_size.insert(0, "48.0")
+        self.entry_inner_size.pack(side="right")
+        self.entry_inner_size.bind("<KeyRelease>", lambda e: self.draw_draggable_poly())
         
         # Grouped Calibration buttons horizontally
         btn_frame_1 = ttk.Frame(col1, style="OFT_Card.TFrame")
@@ -238,9 +259,9 @@ class OFTTrackingTab(ttk.Frame):
         ttk.Label(col2, text="Min Movement Deadzone:", style="OFT_MetricTitle.TLabel").pack(anchor="w")
         self.scale_deadzone = ttk.Scale(col2, from_=0.0, to=30.0, orient="horizontal", command=self.update_deadzone)
         self.scale_deadzone.pack(fill="x")
-        self.lbl_deadzone_val = ttk.Label(col2, text="2.0 cm", style="OFT_Instruct.TLabel")
+        self.lbl_deadzone_val = ttk.Label(col2, text="5.0 cm", style="OFT_Instruct.TLabel")
         self.lbl_deadzone_val.pack(anchor="e")
-        self.scale_deadzone.set(2.0)
+        self.scale_deadzone.set(5.0)
         
         # -- Col 3: Metrics & Export --
         col3 = ttk.Frame(control_panel, style="OFT_Card.TFrame")
@@ -432,42 +453,132 @@ class OFTTrackingTab(ttk.Frame):
             
         self.draw_draggable_poly()
 
-    def draw_draggable_poly(self):
+    def draw_draggable_poly(self, event=None):
         self.canvas_video.delete("calib")
-        if not self.calibrating: return
+        if not getattr(self, 'calibrating', False): return
+        
         pts = [self.calib_pts['TL'], self.calib_pts['TR'], self.calib_pts['BR'], self.calib_pts['BL']]
-        self.canvas_video.create_polygon(pts[0][0], pts[0][1], pts[1][0], pts[1][1], 
-                                         pts[2][0], pts[2][1], pts[3][0], pts[3][1], 
-                                         outline="#00ffff", fill="", width=2, tags="calib")
-        for key, pt in self.calib_pts.items():
-            self.canvas_video.create_oval(pt[0]-6, pt[1]-6, pt[0]+6, pt[1]+6, fill="#f1c40f", outline="black", tags=("calib", key))
+        mode = self.calib_mode.get()
+        
+        try:
+            out_len = float(self.entry_outer_size.get())
+            in_len = float(self.entry_inner_size.get())
+            
+            # Prevent math errors
+            if in_len >= out_len or out_len <= 0 or in_len <= 0: return
+            
+            src_pts = np.array(pts, dtype=np.float32)
+            offset = (out_len - in_len) / 2.0
+            
+            if mode == "Outer":
+                # --- HANDLES CONTROL THE OUTER BOX ---
+                self.canvas_video.create_polygon(pts[0][0], pts[0][1], pts[1][0], pts[1][1], 
+                                                 pts[2][0], pts[2][1], pts[3][0], pts[3][1], 
+                                                 outline="#00ffff", fill="", width=2, tags="calib")
+                
+                # Project Inner Box Inwards
+                dst_pts = np.array([[0, 0], [out_len, 0], [out_len, out_len], [0, out_len]], dtype=np.float32)
+                inv_matrix = np.linalg.inv(cv2.getPerspectiveTransform(src_pts, dst_pts))
+                
+                inner_dst_pts = np.array([[
+                    [offset, offset], [out_len - offset, offset],
+                    [out_len - offset, out_len - offset], [offset, out_len - offset]
+                ]], dtype=np.float32)
+                
+                inner_src_pts = cv2.perspectiveTransform(inner_dst_pts, inv_matrix)[0]
+                self.canvas_video.create_polygon(
+                    inner_src_pts[0][0], inner_src_pts[0][1], inner_src_pts[1][0], inner_src_pts[1][1], 
+                    inner_src_pts[2][0], inner_src_pts[2][1], inner_src_pts[3][0], inner_src_pts[3][1], 
+                    outline="#ff00ff", fill="", width=2, dash=(4, 4), tags="calib")
+
+            else:
+                # --- HANDLES CONTROL THE INNER BOX ---
+                self.canvas_video.create_polygon(pts[0][0], pts[0][1], pts[1][0], pts[1][1], 
+                                                 pts[2][0], pts[2][1], pts[3][0], pts[3][1], 
+                                                 outline="#ff00ff", fill="", width=2, dash=(4, 4), tags="calib")
+                
+                # Project Outer Box Outwards (Negative Offsets)
+                dst_pts = np.array([[0, 0], [in_len, 0], [in_len, in_len], [0, in_len]], dtype=np.float32)
+                inv_matrix = np.linalg.inv(cv2.getPerspectiveTransform(src_pts, dst_pts))
+                
+                outer_dst_pts = np.array([[
+                    [-offset, -offset], [in_len + offset, -offset],
+                    [in_len + offset, in_len + offset], [-offset, in_len + offset]
+                ]], dtype=np.float32)
+                
+                outer_src_pts = cv2.perspectiveTransform(outer_dst_pts, inv_matrix)[0]
+                self.canvas_video.create_polygon(
+                    outer_src_pts[0][0], outer_src_pts[0][1], outer_src_pts[1][0], outer_src_pts[1][1], 
+                    outer_src_pts[2][0], outer_src_pts[2][1], outer_src_pts[3][0], outer_src_pts[3][1], 
+                    outline="#00ffff", fill="", width=2, tags="calib")
+                    
+            # Always draw the yellow draggable handles on top
+            for key, pt in self.calib_pts.items():
+                self.canvas_video.create_oval(pt[0]-6, pt[1]-6, pt[0]+6, pt[1]+6, fill="#f1c40f", outline="black", tags=("calib", key))
+                
+        except ValueError:
+            pass # Fails silently if user deletes all text in the entry box
 
     def confirm_calibration(self):
         try:
-            ref_size = float(self.entry_ref_size.get())
-        except ValueError:
-            messagebox.showerror("Error", "Please input a valid number.")
-            return
-
-        sx, sy = self.orig_w / self.canvas_w, self.orig_h / self.canvas_h
-        src_pts = np.array([
-            [self.calib_pts['TL'][0] * sx, self.calib_pts['TL'][1] * sy],
-            [self.calib_pts['TR'][0] * sx, self.calib_pts['TR'][1] * sy],
-            [self.calib_pts['BR'][0] * sx, self.calib_pts['BR'][1] * sy],
-            [self.calib_pts['BL'][0] * sx, self.calib_pts['BL'][1] * sy]
-        ], dtype=np.float32)
-        
-        dst_pts = np.float32([[100, 100], [300, 100], [300, 300], [100, 300]])
-        self.homography_matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
-        self.scale_factor = ref_size / 200.0
-        
-        self.calibrating = False
-        self.canvas_video.delete("calib")
-        self.btn_init_placement.config(state="normal")
-        self.lbl_instruct.config(text="Step 3: Draw box over rat.", foreground="#64748b")
-        
-        if not self.path_coordinates:
+            out_len = float(self.entry_outer_size.get())
+            in_len = float(self.entry_inner_size.get())
+            
+            if in_len >= out_len or out_len <= 0 or in_len <= 0:
+                return
+                
+            # Internal reference size for our coordinate mapping grid
+            map_w = self.map_size # 400
+            
+            # Calculate dynamic scale factor (Real-world cm per internal pixel)
+            self.scale_factor = out_len / map_w
+            
+            # Dynamically compute pixel boundaries for the center zone tracking limits
+            cm_offset = (out_len - in_len) / 2.0
+            self.inner_min_px = cm_offset / self.scale_factor
+            self.inner_max_px = map_w - self.inner_min_px
+            
+            # Extract source coordinates from our current yellow dragging handles
+            pts = [self.calib_pts['TL'], self.calib_pts['TR'], self.calib_pts['BR'], self.calib_pts['BL']]
+            src_pts = np.array(pts, dtype=np.float32)
+            
+            mode = self.calib_mode.get()
+            if mode == "Outer":
+                # Handles represent outer edge -> Map handles to total map width
+                dst_pts = np.array([
+                    [0, 0],
+                    [map_w, 0],
+                    [map_w, map_w],
+                    [0, map_w]
+                ], dtype=np.float32)
+            else:
+                # Handles represent inner edge -> Map handles to calculated inner limits
+                dst_pts = np.array([
+                    [self.inner_min_px, self.inner_min_px],
+                    [self.inner_max_px, self.inner_min_px],
+                    [self.inner_max_px, self.inner_max_px],
+                    [self.inner_min_px, self.inner_max_px]
+                ], dtype=np.float32)
+                
+            # Compute the final transformation matrix
+            self.homography_matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+            
+            # Shut down calibration overlays
+            self.calibrating = False
+            self.canvas_video.delete("calib")
+            
+            # Toggle control button availability
+            self.btn_confirm_calib.config(state="disabled")
+            self.btn_init_placement.config(state="normal")
+            
+            if hasattr(self, 'lbl_instruct'):
+                self.lbl_instruct.config(text="Step 3: Click 'Draw Box' and select the target animal.")
+                
+            # Re-draw the trajectory canvas grid to show true box proportions
             self.draw_empty_grid_map()
+            
+        except ValueError:
+            pass
 
     def start_tracking(self):
         if self.track_window is None: return
@@ -541,56 +652,86 @@ class OFTTrackingTab(ttk.Frame):
         self.render_trajectory_view()
 
     def map_metrics_to_arena(self, target_pt):
-        if self.homography_matrix is None: return
+        if not hasattr(self, 'homography_matrix') or self.homography_matrix is None: 
+            return
+            
+        # --- FIX: Scale original video coordinates to UI Canvas coordinates ---
+        if hasattr(self, 'orig_w') and self.orig_w > 0:
+            scale_x = self.canvas_w / self.orig_w
+            scale_y = self.canvas_h / self.orig_h
+        else:
+            scale_x, scale_y = 1.0, 1.0
+            
+        canvas_x = target_pt[0] * scale_x
+        canvas_y = target_pt[1] * scale_y
         
-        pt_arr = np.array([[[float(target_pt[0]), float(target_pt[1])]]], dtype=np.float32)
+        # 1. Transform Scaled Coordinates to Map Coordinates
+        pt_arr = np.array([[[float(canvas_x), float(canvas_y)]]], dtype=np.float32)
         warped = cv2.perspectiveTransform(pt_arr, self.homography_matrix)
         px, py = warped[0][0][0], warped[0][0][1]
         
+        # Calculate real-world position (cm)
         pos_cm = (px * self.scale_factor, py * self.scale_factor)
         
-        # --- 1. VISUAL PATH: Always update for a perfectly smooth line ---
+        # --- VISUAL PATH: Always update for a perfectly smooth line ---
+        if not hasattr(self, 'path_coordinates'): 
+            self.path_coordinates = []
+            
         if 0 <= px < self.map_size and 0 <= py < self.map_size:
-            # Only append if the rat moved at least 1 pixel to save memory
             if not self.path_coordinates or self.path_coordinates[-1] != (int(px), int(py)):
                 self.path_coordinates.append((int(px), int(py)))
                 
-        # --- 2. DISTANCE ODOMETER: Strictly apply the deadzone noise filter ---
-        if self.odometer_anchor_cm is None:
+        # --- DISTANCE ODOMETER: Strictly apply the deadzone noise filter ---
+        if getattr(self, 'odometer_anchor_cm', None) is None:
             self.odometer_anchor_cm = pos_cm
+            self.total_distance_cm = 0.0
         else:
             step_distance = math.hypot(pos_cm[0] - self.odometer_anchor_cm[0], pos_cm[1] - self.odometer_anchor_cm[1])
-            
             if step_distance >= self.velocity_deadzone_cm:
                 self.total_distance_cm += step_distance
                 self.lbl_distance.config(text=f"{self.total_distance_cm:.2f} cm")
                 self.odometer_anchor_cm = pos_cm
                 
-        # --- 3. CENTER TIME LOGIC ---
-        if 100 <= px <= 300 and 100 <= py <= 300:
+        # --- CENTER TIME LOGIC (Dynamically Scaled Boundaries) ---
+        min_px = getattr(self, 'inner_min_px', 100)
+        max_px = getattr(self, 'inner_max_px', 300)
+        
+        if min_px <= px <= max_px and min_px <= py <= max_px:
+            if not hasattr(self, 'center_frames'): self.center_frames = 0
             self.center_frames += 1
-            self.lbl_center_time.config(text=f"{(self.center_frames / self.fps):.2f} s")
+            if hasattr(self, 'fps') and self.fps > 0:
+                self.lbl_center_time.config(text=f"{(self.center_frames / self.fps):.2f} s")
             
-        # Draw the line on the internal map
+        # --- DRAWING: Paint the trajectory onto the canvas ---
         if len(self.path_coordinates) > 1:
+            # BGR format: Blue line to match the example image trajectory
             cv2.line(self.trajectory_canvas, self.path_coordinates[-2], self.path_coordinates[-1], (200, 50, 50), 2)
+
 
     def draw_empty_grid_map(self):
         self.trajectory_canvas = np.zeros((self.map_size, self.map_size, 3), dtype=np.uint8)
         self.trajectory_canvas.fill(250) 
         step = self.map_size // 4
+        
+        # Draw base grid
         for i in range(1, 4):
             cv2.line(self.trajectory_canvas, (i * step, 0), (i * step, self.map_size), (220, 220, 220), 1)
             cv2.line(self.trajectory_canvas, (0, i * step), (self.map_size, i * step), (220, 220, 220), 1)
-        cv2.rectangle(self.trajectory_canvas, (100, 100), (300, 300), (180, 180, 255), 2) 
-        # Pass the smaller map_display_size to the UI renderer
+            
+        # Draw dynamic center zone box (Fixed to Pink in OpenCV BGR format: 180 Blue, 180 Green, 255 Red)
+        min_px = int(getattr(self, 'inner_min_px', 100))
+        max_px = int(getattr(self, 'inner_max_px', 300))
+        cv2.rectangle(self.trajectory_canvas, (min_px, min_px), (max_px, max_px), (180, 180, 255), 2) 
+        
         self.display_image_on_label(self.lbl_path, self.trajectory_canvas, self.map_display_size, self.map_display_size)
 
     def render_trajectory_view(self):
         temp_map = self.trajectory_canvas.copy()
-        if self.path_coordinates:
+        
+        # Draw the red dot at the rat's current location
+        if hasattr(self, 'path_coordinates') and self.path_coordinates:
             cv2.circle(temp_map, self.path_coordinates[-1], 6, (0, 0, 255), -1) 
-        # Pass the smaller map_display_size to the UI renderer
+            
         self.display_image_on_label(self.lbl_path, temp_map, self.map_display_size, self.map_display_size)
 
     def update_video_canvas(self, opencv_frame):
