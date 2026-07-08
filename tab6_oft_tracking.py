@@ -249,7 +249,7 @@ class OFTTrackingTab(ttk.Frame):
         self.btn_track.pack(side="left", fill="x", expand=True, padx=(2, 0))
         
         # Tightened vertical spacing for sliders
-        ttk.Label(col2, text="Inertia Alpha (Smoothing):", style="OFT_MetricTitle.TLabel").pack(anchor="w")
+        ttk.Label(col2, text="Box speed:", style="OFT_MetricTitle.TLabel").pack(anchor="w")
         self.scale_inertia = ttk.Scale(col2, from_=0.01, to=1.0, orient="horizontal", command=self.update_inertia)
         self.scale_inertia.pack(fill="x")
         self.lbl_inertia_val = ttk.Label(col2, text="0.10", style="OFT_Instruct.TLabel")
