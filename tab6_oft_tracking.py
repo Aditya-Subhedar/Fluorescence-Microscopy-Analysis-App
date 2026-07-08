@@ -136,11 +136,7 @@ class OFTTrackingTab(ttk.Frame):
         self.columnconfigure(0, weight=1)
         
         main_container = ttk.Frame(self, style="OFT.TFrame")
-        # Grid it at 0,0 and let it stick to all edges (nsew)
         main_container.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
-        
-        self.lbl_instruct = ttk.Label(main_container, text="Step 1: Load a video file to begin.", font=("Segoe UI", 12, "bold"), foreground="#2c3e50")
-        self.lbl_instruct.pack(fill="x", pady=(0, 10))
         
         # ================= TOP PANEL: VIEWPORTS =================
         display_panel = ttk.Frame(main_container, style="OFT.TFrame")
@@ -149,12 +145,9 @@ class OFTTrackingTab(ttk.Frame):
         self.frame_vid = ttk.LabelFrame(display_panel, text=" Monitor Viewport ", style="OFT.TLabelframe", padding=15)
         self.frame_vid.pack(side="left", padx=(0, 10), fill="both", expand=True)
         
-        # Add a subtle background to the canvas area
-        canvas_bg_frame = tk.Frame(self.frame_vid, bg="#000000", bd=0)
-        canvas_bg_frame.pack(anchor="center", expand=True)
-        
-        self.canvas_video = tk.Canvas(canvas_bg_frame, width=self.canvas_w, height=self.canvas_h, bg="#1e1e1e", highlightthickness=0)
-        self.canvas_video.pack(padx=2, pady=2)
+        # Solid black border applied directly to the canvas
+        self.canvas_video = tk.Canvas(self.frame_vid, width=self.canvas_w, height=self.canvas_h, bg="#1e1e1e", highlightthickness=2, highlightbackground="black")
+        self.canvas_video.pack(anchor="center", expand=True, padx=2, pady=2)
         
         self.canvas_video.bind("<ButtonPress-1>", self.on_canvas_click)
         self.canvas_video.bind("<B1-Motion>", self.on_canvas_drag)
@@ -167,24 +160,31 @@ class OFTTrackingTab(ttk.Frame):
         self.lbl_path.pack(anchor="center", expand=True)
 
         # ================= BOTTOM PANEL: CONTROLS =================
-        # Reduced padding from 20 to 10 to save vertical space
         control_panel = ttk.LabelFrame(main_container, text=" OFT Inertial Tracker Controls ", style="OFT.TLabelframe", padding=10)
         control_panel.pack(fill="x")
         
-        for i in range(4):
-            control_panel.columnconfigure(i, weight=1)
+        # Configure grid for 4 columns and 3 separators (7 total slots)
+        control_panel.columnconfigure(0, weight=1)
+        control_panel.columnconfigure(2, weight=1)
+        control_panel.columnconfigure(4, weight=1)
+        control_panel.columnconfigure(6, weight=1)
+        
+        # Shared button font
+        btn_font = ("Segoe UI", 9, "bold")
             
         # -- Col 0: Video Source --
         col0 = ttk.Frame(control_panel, style="OFT_Card.TFrame")
-        col0.grid(row=0, column=0, sticky="nsew", padx=5)
+        col0.grid(row=0, column=0, sticky="nsew", padx=10)
         ttk.Label(col0, text="1. Video Source", style="OFT_Header.TLabel").pack(anchor="w", pady=(0,4))
         
-        # Grouped Load & Play buttons horizontally
         btn_frame_0 = ttk.Frame(col0, style="OFT_Card.TFrame")
         btn_frame_0.pack(fill="x", pady=(0, 5))
-        self.btn_browse = ttk.Button(btn_frame_0, text="Load Video", style="OFT.TButton", command=self.load_video)
+        
+        # Blue Load Button
+        self.btn_browse = tk.Button(btn_frame_0, text="Load Video", bg="#3498db", fg="white", disabledforeground="#ffffff", activebackground="#2980b9", activeforeground="white", relief="flat", font=btn_font, cursor="hand2", command=self.load_video)
         self.btn_browse.pack(side="left", fill="x", expand=True, padx=(0, 2))
-        self.btn_play_pause = ttk.Button(btn_frame_0, text="Play/Pause", style="OFT.TButton", command=self.toggle_video_playback, state="disabled")
+        # Green Play Button
+        self.btn_play_pause = tk.Button(btn_frame_0, text="Play/Pause", bg="#2ecc71", fg="white", disabledforeground="#ffffff", activebackground="#27ae60", activeforeground="white", relief="flat", font=btn_font, cursor="hand2", command=self.toggle_video_playback, state="disabled")
         self.btn_play_pause.pack(side="left", fill="x", expand=True, padx=(2, 0))
         
         ttk.Label(col0, text="Playback Speed:", style="OFT_MetricTitle.TLabel").pack(anchor="w")
@@ -193,31 +193,32 @@ class OFTTrackingTab(ttk.Frame):
         self.lbl_speed_val = ttk.Label(col0, text="1.0x", style="OFT_Instruct.TLabel")
         self.lbl_speed_val.pack(anchor="e")
         self.scale_speed.set(1.0)
+
+        # Dynamic Instruction Label moved below the slider
+        self.lbl_instruct = ttk.Label(col0, text="Step 1: Load a video file to begin.", font=("Segoe UI", 10, "bold"), foreground="#e67e22", wraplength=220)
+        self.lbl_instruct.pack(anchor="w", pady=(10, 0))
+        
+        # -- Separator 1 --
+        ttk.Separator(control_panel, orient="vertical").grid(row=0, column=1, sticky="ns", pady=5)
         
         # -- Col 1: Calibration --
         col1 = ttk.Frame(control_panel, style="OFT_Card.TFrame")
-        col1.grid(row=0, column=1, sticky="nsew", padx=5)
+        col1.grid(row=0, column=2, sticky="nsew", padx=10)
         ttk.Label(col1, text="2. Arena Calibration", style="OFT_Header.TLabel").pack(anchor="w", pady=(0,2))
         
-        # Add target selection variables
-        if not hasattr(self, 'calib_mode'):
-            self.calib_mode = tk.StringVar(value="Outer")
-        if not hasattr(self, 'arena_shape'):
-            self.arena_shape = tk.StringVar(value="Square")
+        if not hasattr(self, 'calib_mode'): self.calib_mode = tk.StringVar(value="Outer")
+        if not hasattr(self, 'arena_shape'): self.arena_shape = tk.StringVar(value="Square")
 
-        # Arena Shape Selection
         shape_frame = ttk.Frame(col1, style="OFT_Card.TFrame")
         shape_frame.pack(fill="x", pady=(0,2))
         ttk.Radiobutton(shape_frame, text="Square", variable=self.arena_shape, value="Square", command=self.draw_draggable_poly).pack(side="left", expand=True)
         ttk.Radiobutton(shape_frame, text="Circle", variable=self.arena_shape, value="Circle", command=self.draw_draggable_poly).pack(side="left", expand=True)
 
-        # Mode Selection Radiobuttons
         mode_frame = ttk.Frame(col1, style="OFT_Card.TFrame")
         mode_frame.pack(fill="x", pady=(0,2))
         ttk.Radiobutton(mode_frame, text="Drag Outer", variable=self.calib_mode, value="Outer", command=self.draw_draggable_poly).pack(side="left", expand=True)
         ttk.Radiobutton(mode_frame, text="Drag Inner", variable=self.calib_mode, value="Inner", command=self.draw_draggable_poly).pack(side="left", expand=True)
         
-        # Outer Dimension (Length or Diameter)
         frame_outer = ttk.Frame(col1, style="OFT_Card.TFrame")
         frame_outer.pack(fill="x", pady=(0,2))
         ttk.Label(frame_outer, text="Outer Size (cm):", background="#ffffff").pack(side="left")
@@ -226,7 +227,6 @@ class OFTTrackingTab(ttk.Frame):
         self.entry_outer_size.pack(side="right")
         self.entry_outer_size.bind("<KeyRelease>", lambda e: self.draw_draggable_poly())
 
-        # Inner Dimension (Length or Diameter)
         frame_inner = ttk.Frame(col1, style="OFT_Card.TFrame")
         frame_inner.pack(fill="x", pady=(0,4))
         ttk.Label(frame_inner, text="Inner Size (cm):", background="#ffffff").pack(side="left")
@@ -235,28 +235,30 @@ class OFTTrackingTab(ttk.Frame):
         self.entry_inner_size.pack(side="right")
         self.entry_inner_size.bind("<KeyRelease>", lambda e: self.draw_draggable_poly())
         
-        # Grouped Calibration buttons horizontally
         btn_frame_1 = ttk.Frame(col1, style="OFT_Card.TFrame")
         btn_frame_1.pack(fill="x", pady=(0, 5))
-        self.btn_calibrate = ttk.Button(btn_frame_1, text="Handles", style="OFT.TButton", command=self.toggle_calibration, state="disabled")
+        # Orange Calibration Buttons
+        self.btn_calibrate = tk.Button(btn_frame_1, text="Handles", bg="#f39c12", fg="white", disabledforeground="#ffffff", activebackground="#e67e22", activeforeground="white", relief="flat", font=btn_font, cursor="hand2", command=self.toggle_calibration, state="disabled")
         self.btn_calibrate.pack(side="left", fill="x", expand=True, padx=(0, 2))
-        self.btn_confirm_calib = ttk.Button(btn_frame_1, text="Lock", style="OFT.TButton", command=self.confirm_calibration, state="disabled")
+        self.btn_confirm_calib = tk.Button(btn_frame_1, text="Lock", bg="#f39c12", fg="white", disabledforeground="#ffffff", activebackground="#e67e22", activeforeground="white", relief="flat", font=btn_font, cursor="hand2", command=self.confirm_calibration, state="disabled")
         self.btn_confirm_calib.pack(side="left", fill="x", expand=True, padx=(2, 0))
+        
+        # -- Separator 2 --
+        ttk.Separator(control_panel, orient="vertical").grid(row=0, column=3, sticky="ns", pady=5)
         
         # -- Col 2: Tracking --
         col2 = ttk.Frame(control_panel, style="OFT_Card.TFrame")
-        col2.grid(row=0, column=2, sticky="nsew", padx=5)
+        col2.grid(row=0, column=4, sticky="nsew", padx=10)
         ttk.Label(col2, text="3. Target Initialization", style="OFT_Header.TLabel").pack(anchor="w", pady=(0,4))
         
-        # Grouped Box & Track buttons horizontally
         btn_frame_2 = ttk.Frame(col2, style="OFT_Card.TFrame")
         btn_frame_2.pack(fill="x", pady=(0, 5))
-        self.btn_init_placement = ttk.Button(btn_frame_2, text="Draw Box", style="OFT.TButton", command=self.enable_placement_mode, state="disabled")
+        # Red Tracking Buttons
+        self.btn_init_placement = tk.Button(btn_frame_2, text="Draw Box", bg="#e74c3c", fg="white", disabledforeground="#ffffff", activebackground="#c0392b", activeforeground="white", relief="flat", font=btn_font, cursor="hand2", command=self.enable_placement_mode, state="disabled")
         self.btn_init_placement.pack(side="left", fill="x", expand=True, padx=(0, 2))
-        self.btn_track = ttk.Button(btn_frame_2, text="Track", style="OFT.TButton", command=self.start_tracking, state="disabled")
+        self.btn_track = tk.Button(btn_frame_2, text="Track", bg="#e74c3c", fg="white", disabledforeground="#ffffff", activebackground="#c0392b", activeforeground="white", relief="flat", font=btn_font, cursor="hand2", command=self.start_tracking, state="disabled")
         self.btn_track.pack(side="left", fill="x", expand=True, padx=(2, 0))
         
-        # Tightened vertical spacing for sliders
         ttk.Label(col2, text="Box speed (inertia^-1):", style="OFT_MetricTitle.TLabel").pack(anchor="w")
         self.scale_inertia = ttk.Scale(col2, from_=0.01, to=1.0, orient="horizontal", command=self.update_inertia)
         self.scale_inertia.pack(fill="x")
@@ -271,32 +273,49 @@ class OFTTrackingTab(ttk.Frame):
         self.lbl_deadzone_val.pack(anchor="e")
         self.scale_deadzone.set(5.0)
         
-        # -- Col 3: Metrics & Export --
+        # -- Separator 3 --
+        ttk.Separator(control_panel, orient="vertical").grid(row=0, column=5, sticky="ns", pady=5)
+        
+        # -- Col 3: Live Metrics --
         col3 = ttk.Frame(control_panel, style="OFT_Card.TFrame")
-        col3.grid(row=0, column=3, sticky="nsew", padx=5)
-        ttk.Label(col3, text="4. Live Metrics", style="OFT_Header.TLabel").pack(anchor="w", pady=(0,4))
+        col3.grid(row=0, column=6, sticky="nsew", padx=10)
+        ttk.Label(col3, text="4. Live Metrics", style="OFT_Header.TLabel").pack(anchor="w", pady=(0,2))
         
-        dist_frame = ttk.Frame(col3, style="OFT_Card.TFrame")
-        dist_frame.pack(fill="x", pady=(0, 2))
-        ttk.Label(dist_frame, text="Distance:", style="OFT_MetricTitle.TLabel").pack(side="left")
-        self.lbl_distance = ttk.Label(dist_frame, text="0.00 cm", style="OFT_MetricValue.TLabel", foreground="#d35400")
-        self.lbl_distance.pack(side="right")
+        metric_frame = ttk.Frame(col3, style="OFT_Card.TFrame")
+        metric_frame.pack(fill="x", expand=True)
         
-        time_frame = ttk.Frame(col3, style="OFT_Card.TFrame")
-        time_frame.pack(fill="x", pady=(0, 6))
-        ttk.Label(time_frame, text="Center Time:", style="OFT_MetricTitle.TLabel").pack(side="left")
-        self.lbl_center_time = ttk.Label(time_frame, text="0.00 s", style="OFT_MetricValue.TLabel", foreground="#2980b9")
-        self.lbl_center_time.pack(side="right")
+        ttk.Label(metric_frame, text="Distance:", background="#ffffff").grid(row=0, column=0, sticky="w", pady=2)
+        self.lbl_distance = ttk.Label(metric_frame, text="0.00 cm", font=("Segoe UI", 11, "bold"), foreground="#d35400")
+        self.lbl_distance.grid(row=0, column=1, sticky="e", pady=2)
         
-        frame_export = ttk.Frame(col3, style="OFT_Card.TFrame")
-        frame_export.pack(fill="x", pady=(0,5))
-        self.btn_export_data = ttk.Button(frame_export, text="Save CSV", style="OFT.TButton", command=self.export_data, state="disabled")
+        ttk.Label(metric_frame, text="Center Time:", background="#ffffff").grid(row=1, column=0, sticky="w", pady=2)
+        self.lbl_center_time = ttk.Label(metric_frame, text="0.00 s", font=("Segoe UI", 11, "bold"), foreground="#2980b9")
+        self.lbl_center_time.grid(row=1, column=1, sticky="e", pady=2)
+
+        ttk.Label(metric_frame, text="Outer Time:", background="#ffffff").grid(row=2, column=0, sticky="w", pady=2)
+        self.lbl_outer_time = ttk.Label(metric_frame, text="0.00 s", font=("Segoe UI", 11, "bold"), foreground="#8e44ad")
+        self.lbl_outer_time.grid(row=2, column=1, sticky="e", pady=2)
+
+        ttk.Label(metric_frame, text="Crossovers:", background="#ffffff").grid(row=3, column=0, sticky="w", pady=2)
+        self.lbl_crossovers = ttk.Label(metric_frame, text="0", font=("Segoe UI", 11, "bold"), foreground="#27ae60")
+        self.lbl_crossovers.grid(row=3, column=1, sticky="e", pady=2)
+        
+        metric_frame.columnconfigure(1, weight=1)
+
+        btn_box = ttk.Frame(col3, style="OFT_Card.TFrame")
+        btn_box.pack(fill="x", side="bottom", pady=(5,0))
+        
+        btn_row1 = ttk.Frame(btn_box, style="OFT_Card.TFrame")
+        btn_row1.pack(fill="x")
+        # Purple Export Buttons
+        self.btn_export_data = tk.Button(btn_row1, text="Save CSV", bg="#9b59b6", fg="white", disabledforeground="#ffffff", activebackground="#8e44ad", activeforeground="white", relief="flat", font=btn_font, cursor="hand2", command=self.export_data, state="disabled")
         self.btn_export_data.pack(side="left", fill="x", expand=True, padx=(0,2))
-        self.btn_export_map = ttk.Button(frame_export, text="Save Map", style="OFT.TButton", command=self.export_map, state="disabled")
+        self.btn_export_map = tk.Button(btn_row1, text="Save Map", bg="#9b59b6", fg="white", disabledforeground="#ffffff", activebackground="#8e44ad", activeforeground="white", relief="flat", font=btn_font, cursor="hand2", command=self.export_map, state="disabled")
         self.btn_export_map.pack(side="left", fill="x", expand=True, padx=(2,0))
         
-        self.btn_reset_data = ttk.Button(col3, text="Reset Trial", style="OFT.TButton", command=self.reset_trial_data, state="disabled")
-        self.btn_reset_data.pack(fill="x")
+        # Gray Reset Button
+        self.btn_reset_data = tk.Button(btn_box, text="Reset Trial", bg="#95a5a6", fg="white", disabledforeground="#ffffff", activebackground="#7f8c8d", activeforeground="white", relief="flat", font=btn_font, cursor="hand2", command=self.reset_trial_data, state="disabled")
+        self.btn_reset_data.pack(fill="x", pady=(4,0))
 
     def update_speed(self, val):
         self.playback_speed = float(val)
@@ -653,6 +672,7 @@ class OFTTrackingTab(ttk.Frame):
                               (self.track_window[0]+bw, self.track_window[1]+bh), (0, 255, 255), 2)
                 cv2.circle(frame, (int(self.smoothed_cx), int(self.smoothed_cy)), 6, (0, 0, 255), -1)
                 
+                # Call the method by adding parentheses ()
                 self.map_metrics_to_arena((self.smoothed_cx, self.smoothed_cy))
         else:
             cv2.rectangle(frame, (self.track_window[0], self.track_window[1]), 
@@ -666,7 +686,7 @@ class OFTTrackingTab(ttk.Frame):
         if not hasattr(self, 'homography_matrix') or self.homography_matrix is None: 
             return
             
-        # --- FIX: Scale original video coordinates to UI Canvas coordinates ---
+        # --- Scale original video coordinates to UI Canvas coordinates ---
         if hasattr(self, 'orig_w') and self.orig_w > 0:
             scale_x = self.canvas_w / self.orig_w
             scale_y = self.canvas_h / self.orig_h
@@ -684,7 +704,7 @@ class OFTTrackingTab(ttk.Frame):
         # Calculate real-world position (cm)
         pos_cm = (px * self.scale_factor, py * self.scale_factor)
         
-        # --- VISUAL PATH: Always update for a perfectly smooth line ---
+        # --- VISUAL PATH ---
         if not hasattr(self, 'path_coordinates'): 
             self.path_coordinates = []
             
@@ -692,7 +712,7 @@ class OFTTrackingTab(ttk.Frame):
             if not self.path_coordinates or self.path_coordinates[-1] != (int(px), int(py)):
                 self.path_coordinates.append((int(px), int(py)))
                 
-        # --- DISTANCE ODOMETER: Strictly apply the deadzone noise filter ---
+        # --- DISTANCE ODOMETER ---
         if getattr(self, 'odometer_anchor_cm', None) is None:
             self.odometer_anchor_cm = pos_cm
             self.total_distance_cm = 0.0
@@ -700,10 +720,18 @@ class OFTTrackingTab(ttk.Frame):
             step_distance = math.hypot(pos_cm[0] - self.odometer_anchor_cm[0], pos_cm[1] - self.odometer_anchor_cm[1])
             if step_distance >= self.velocity_deadzone_cm:
                 self.total_distance_cm += step_distance
-                self.lbl_distance.config(text=f"{self.total_distance_cm:.2f} cm")
+                if hasattr(self, 'lbl_distance'):
+                    self.lbl_distance.config(text=f"{self.total_distance_cm:.2f} cm")
                 self.odometer_anchor_cm = pos_cm
                 
-        # --- CENTER TIME LOGIC (Dynamically Scaled Boundaries) ---
+        # --- ZONE & METRIC INITIALIZATION (FIXED) ---
+        if not hasattr(self, 'center_frames'): self.center_frames = 0
+        if not hasattr(self, 'outer_frames'): self.outer_frames = 0
+        if not hasattr(self, 'crossovers'): self.crossovers = 0
+        if not hasattr(self, 'last_tile'): self.last_tile = None
+        if not hasattr(self, 'last_crossover_dist'): self.last_crossover_dist = 0.0
+
+        # --- CENTER/OUTER TIME LOGIC ---
         min_px = getattr(self, 'inner_min_px', 100)
         max_px = getattr(self, 'inner_max_px', 300)
         shape = getattr(self, 'arena_shape', tk.StringVar(value="Square")).get()
@@ -713,7 +741,6 @@ class OFTTrackingTab(ttk.Frame):
             if min_px <= px <= max_px and min_px <= py <= max_px:
                 in_center = True
         else:
-            # Circle logic: distance from center
             center_pt = self.map_size / 2.0
             radius = (max_px - min_px) / 2.0
             dist_sq = (px - center_pt)**2 + (py - center_pt)**2
@@ -721,16 +748,49 @@ class OFTTrackingTab(ttk.Frame):
                 in_center = True
                 
         if in_center:
-            if not hasattr(self, 'center_frames'): self.center_frames = 0
             self.center_frames += 1
-            if hasattr(self, 'fps') and self.fps > 0:
+            if hasattr(self, 'fps') and self.fps > 0 and hasattr(self, 'lbl_center_time'):
                 self.lbl_center_time.config(text=f"{(self.center_frames / self.fps):.2f} s")
-            
-        # --- DRAWING: Paint the trajectory onto the canvas ---
-        if len(self.path_coordinates) > 1:
-            # BGR format: Blue line to match the example image trajectory
-            cv2.line(self.trajectory_canvas, self.path_coordinates[-2], self.path_coordinates[-1], (200, 50, 50), 2)
+        else:
+            self.outer_frames += 1
+            if hasattr(self, 'fps') and self.fps > 0 and hasattr(self, 'lbl_outer_time'):
+                self.lbl_outer_time.config(text=f"{(self.outer_frames / self.fps):.2f} s")
 
+        # --- TILE CROSSOVER LOGIC (Distance Debounced) ---
+        step = self.map_size / 4.0
+        
+        tile_x = min(3, max(0, int(px // step)))
+        tile_y = min(3, max(0, int(py // step)))
+        current_tile = (tile_x, tile_y)
+
+        # Set the starting tile on the very first frame so we have a baseline
+        if self.last_tile is None:
+            self.last_tile = current_tile
+
+        # If the red dot enters a new tile...
+        if current_tile != self.last_tile:
+            
+            # Check how far the rat has traveled since the LAST recorded crossover
+            dist_since_crossover = self.total_distance_cm - self.last_crossover_dist
+            debounce_threshold = 3.0 * getattr(self, 'velocity_deadzone_cm', 5.0)
+            
+            if dist_since_crossover >= debounce_threshold:
+                # Valid crossover!
+                self.crossovers += 1
+                if hasattr(self, 'lbl_crossovers'):
+                    self.lbl_crossovers.config(text=f"{self.crossovers}")
+                
+                # Update our baseline tile and reset the distance anchor for the next crossover
+                self.last_tile = current_tile
+                self.last_crossover_dist = self.total_distance_cm
+                
+            # Note: If the distance threshold IS NOT met, we DO NOT update self.last_tile. 
+            # This ensures that if the rat jitters back into the old tile, the crossover is ignored. 
+            # It only updates once it fully commits to the new tile by walking far enough.
+            
+        # --- DRAWING ---
+        if len(self.path_coordinates) > 1:
+            cv2.line(self.trajectory_canvas, self.path_coordinates[-2], self.path_coordinates[-1], (200, 50, 50), 2)
 
     def draw_empty_grid_map(self):
         self.trajectory_canvas = np.zeros((self.map_size, self.map_size, 3), dtype=np.uint8)
@@ -788,11 +848,26 @@ class OFTTrackingTab(ttk.Frame):
         filename = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("Excel CSV File", "*.csv")])
         if filename:
             try:
+                # Fallback to a standard 30 FPS if self.fps is missing or invalid to avoid zero division
+                fps = self.fps if (hasattr(self, 'fps') and self.fps > 0) else 30.0
+                
+                # Calculate time metrics based on frame allocations
+                center_time = self.center_frames / fps
+                outer_time = self.outer_frames / fps
+                total_time = (self.center_frames + self.outer_frames) / fps
+                
                 with open(filename, mode='w', newline='') as f:
                     writer = csv.writer(f)
+                    # Write the header row
                     writer.writerow(["Metric", "Value"])
+                    
+                    # Write tracking metrics
                     writer.writerow(["Total Distance (cm)", round(self.total_distance_cm, 2)])
-                    writer.writerow(["Center Zone Time (s)", round(self.center_frames / self.fps, 2)])
+                    writer.writerow(["Center Zone Time (s)", round(center_time, 2)])
+                    writer.writerow(["Outer Zone Time (s)", round(outer_time, 2)])
+                    writer.writerow(["Total Time of Experiment (s)", round(total_time, 2)])
+                    writer.writerow(["Grid Crossovers", self.crossovers])
+                    
                 messagebox.showinfo("Export Successful", f"Data saved to:\n{filename}")
             except Exception as e:
                 messagebox.showerror("Export Failed", f"Could not save file:\n{e}")
