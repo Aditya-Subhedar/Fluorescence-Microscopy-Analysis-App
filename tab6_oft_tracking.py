@@ -199,9 +199,17 @@ class OFTTrackingTab(ttk.Frame):
         col1.grid(row=0, column=1, sticky="nsew", padx=5)
         ttk.Label(col1, text="2. Arena Calibration", style="OFT_Header.TLabel").pack(anchor="w", pady=(0,2))
         
-        # Add target selection variable
+        # Add target selection variables
         if not hasattr(self, 'calib_mode'):
             self.calib_mode = tk.StringVar(value="Outer")
+        if not hasattr(self, 'arena_shape'):
+            self.arena_shape = tk.StringVar(value="Square")
+
+        # Arena Shape Selection
+        shape_frame = ttk.Frame(col1, style="OFT_Card.TFrame")
+        shape_frame.pack(fill="x", pady=(0,2))
+        ttk.Radiobutton(shape_frame, text="Square", variable=self.arena_shape, value="Square", command=self.draw_draggable_poly).pack(side="left", expand=True)
+        ttk.Radiobutton(shape_frame, text="Circle", variable=self.arena_shape, value="Circle", command=self.draw_draggable_poly).pack(side="left", expand=True)
 
         # Mode Selection Radiobuttons
         mode_frame = ttk.Frame(col1, style="OFT_Card.TFrame")
@@ -209,19 +217,19 @@ class OFTTrackingTab(ttk.Frame):
         ttk.Radiobutton(mode_frame, text="Drag Outer", variable=self.calib_mode, value="Outer", command=self.draw_draggable_poly).pack(side="left", expand=True)
         ttk.Radiobutton(mode_frame, text="Drag Inner", variable=self.calib_mode, value="Inner", command=self.draw_draggable_poly).pack(side="left", expand=True)
         
-        # Outer Dimension (Bound to real-time updates)
+        # Outer Dimension (Length or Diameter)
         frame_outer = ttk.Frame(col1, style="OFT_Card.TFrame")
         frame_outer.pack(fill="x", pady=(0,2))
-        ttk.Label(frame_outer, text="Outer Arena (cm):", background="#ffffff").pack(side="left")
+        ttk.Label(frame_outer, text="Outer Size (cm):", background="#ffffff").pack(side="left")
         self.entry_outer_size = ttk.Entry(frame_outer, width=6, font=("Segoe UI", 10))
         self.entry_outer_size.insert(0, "96.0")
         self.entry_outer_size.pack(side="right")
         self.entry_outer_size.bind("<KeyRelease>", lambda e: self.draw_draggable_poly())
 
-        # Inner Dimension (Bound to real-time updates)
+        # Inner Dimension (Length or Diameter)
         frame_inner = ttk.Frame(col1, style="OFT_Card.TFrame")
         frame_inner.pack(fill="x", pady=(0,4))
-        ttk.Label(frame_inner, text="Inner Zone (cm):", background="#ffffff").pack(side="left")
+        ttk.Label(frame_inner, text="Inner Size (cm):", background="#ffffff").pack(side="left")
         self.entry_inner_size = ttk.Entry(frame_inner, width=6, font=("Segoe UI", 10))
         self.entry_inner_size.insert(0, "48.0")
         self.entry_inner_size.pack(side="right")
@@ -249,7 +257,7 @@ class OFTTrackingTab(ttk.Frame):
         self.btn_track.pack(side="left", fill="x", expand=True, padx=(2, 0))
         
         # Tightened vertical spacing for sliders
-        ttk.Label(col2, text="Box speed:", style="OFT_MetricTitle.TLabel").pack(anchor="w")
+        ttk.Label(col2, text="Box speed (inertia^-1):", style="OFT_MetricTitle.TLabel").pack(anchor="w")
         self.scale_inertia = ttk.Scale(col2, from_=0.01, to=1.0, orient="horizontal", command=self.update_inertia)
         self.scale_inertia.pack(fill="x")
         self.lbl_inertia_val = ttk.Label(col2, text="0.10", style="OFT_Instruct.TLabel")
@@ -459,65 +467,68 @@ class OFTTrackingTab(ttk.Frame):
         
         pts = [self.calib_pts['TL'], self.calib_pts['TR'], self.calib_pts['BR'], self.calib_pts['BL']]
         mode = self.calib_mode.get()
+        shape = getattr(self, 'arena_shape', tk.StringVar(value="Square")).get()
         
+        # Helper to generate perfect circle points in top-down view
+        def get_circle_pts(cx, cy, r, num_pts=36):
+            return np.array([[[cx + r * math.cos(2 * math.pi * i / num_pts), 
+                               cy + r * math.sin(2 * math.pi * i / num_pts)] 
+                              for i in range(num_pts)]], dtype=np.float32)
         try:
             out_len = float(self.entry_outer_size.get())
             in_len = float(self.entry_inner_size.get())
-            
-            # Prevent math errors
             if in_len >= out_len or out_len <= 0 or in_len <= 0: return
             
             src_pts = np.array(pts, dtype=np.float32)
             offset = (out_len - in_len) / 2.0
             
+            # Create matrices depending on which box the handles represent
             if mode == "Outer":
-                # --- HANDLES CONTROL THE OUTER BOX ---
-                self.canvas_video.create_polygon(pts[0][0], pts[0][1], pts[1][0], pts[1][1], 
-                                                 pts[2][0], pts[2][1], pts[3][0], pts[3][1], 
-                                                 outline="#00ffff", fill="", width=2, tags="calib")
-                
-                # Project Inner Box Inwards
                 dst_pts = np.array([[0, 0], [out_len, 0], [out_len, out_len], [0, out_len]], dtype=np.float32)
                 inv_matrix = np.linalg.inv(cv2.getPerspectiveTransform(src_pts, dst_pts))
-                
-                inner_dst_pts = np.array([[
-                    [offset, offset], [out_len - offset, offset],
-                    [out_len - offset, out_len - offset], [offset, out_len - offset]
-                ]], dtype=np.float32)
-                
-                inner_src_pts = cv2.perspectiveTransform(inner_dst_pts, inv_matrix)[0]
-                self.canvas_video.create_polygon(
-                    inner_src_pts[0][0], inner_src_pts[0][1], inner_src_pts[1][0], inner_src_pts[1][1], 
-                    inner_src_pts[2][0], inner_src_pts[2][1], inner_src_pts[3][0], inner_src_pts[3][1], 
-                    outline="#ff00ff", fill="", width=2, dash=(4, 4), tags="calib")
-
+                outer_dash, inner_dash = (), (4, 4)
             else:
-                # --- HANDLES CONTROL THE INNER BOX ---
-                self.canvas_video.create_polygon(pts[0][0], pts[0][1], pts[1][0], pts[1][1], 
-                                                 pts[2][0], pts[2][1], pts[3][0], pts[3][1], 
-                                                 outline="#ff00ff", fill="", width=2, dash=(4, 4), tags="calib")
-                
-                # Project Outer Box Outwards (Negative Offsets)
                 dst_pts = np.array([[0, 0], [in_len, 0], [in_len, in_len], [0, in_len]], dtype=np.float32)
                 inv_matrix = np.linalg.inv(cv2.getPerspectiveTransform(src_pts, dst_pts))
+                outer_dash, inner_dash = (), (4, 4)
                 
-                outer_dst_pts = np.array([[
-                    [-offset, -offset], [in_len + offset, -offset],
-                    [in_len + offset, in_len + offset], [-offset, in_len + offset]
-                ]], dtype=np.float32)
+            # Define standard top-down bounding boxes for projection
+            if mode == "Outer":
+                outer_dst = np.array([[[0, 0], [out_len, 0], [out_len, out_len], [0, out_len]]], dtype=np.float32)
+                inner_dst = np.array([[[offset, offset], [out_len - offset, offset], [out_len - offset, out_len - offset], [offset, out_len - offset]]], dtype=np.float32)
+            else:
+                outer_dst = np.array([[[-offset, -offset], [in_len + offset, -offset], [in_len + offset, in_len + offset], [-offset, in_len + offset]]], dtype=np.float32)
+                inner_dst = np.array([[[0, 0], [in_len, 0], [in_len, in_len], [0, in_len]]], dtype=np.float32)
+
+            if shape == "Square":
+                # Project Squares
+                out_src = cv2.perspectiveTransform(outer_dst, inv_matrix)[0]
+                in_src = cv2.perspectiveTransform(inner_dst, inv_matrix)[0]
+                self.canvas_video.create_polygon(*[val for pt in out_src for val in pt], outline="#00ffff" if mode=="Outer" else "#ff00ff", fill="", width=2, dash=outer_dash if mode=="Outer" else inner_dash, tags="calib")
+                self.canvas_video.create_polygon(*[val for pt in in_src for val in pt], outline="#ff00ff" if mode=="Outer" else "#00ffff", fill="", width=2, dash=inner_dash if mode=="Outer" else outer_dash, tags="calib")
+            else:
+                # Project Circles
+                center = out_len / 2.0 if mode == "Outer" else in_len / 2.0
+                out_rad = out_len / 2.0
+                in_rad = in_len / 2.0
                 
-                outer_src_pts = cv2.perspectiveTransform(outer_dst_pts, inv_matrix)[0]
-                self.canvas_video.create_polygon(
-                    outer_src_pts[0][0], outer_src_pts[0][1], outer_src_pts[1][0], outer_src_pts[1][1], 
-                    outer_src_pts[2][0], outer_src_pts[2][1], outer_src_pts[3][0], outer_src_pts[3][1], 
-                    outline="#00ffff", fill="", width=2, tags="calib")
-                    
-            # Always draw the yellow draggable handles on top
+                out_circ_dst = get_circle_pts(center, center, out_rad)
+                in_circ_dst = get_circle_pts(center, center, in_rad)
+                
+                out_src = cv2.perspectiveTransform(out_circ_dst, inv_matrix)[0]
+                in_src = cv2.perspectiveTransform(in_circ_dst, inv_matrix)[0]
+                
+                # Draw light bounding box to help user align the handles
+                self.canvas_video.create_polygon(pts[0][0], pts[0][1], pts[1][0], pts[1][1], pts[2][0], pts[2][1], pts[3][0], pts[3][1], outline="#aaaaaa", fill="", width=1, dash=(2, 2), tags="calib")
+                # Draw distorted circles as polygons with smooth curves
+                self.canvas_video.create_polygon(*[val for pt in out_src for val in pt], outline="#00ffff" if mode=="Outer" else "#ff00ff", fill="", width=2, smooth=True, dash=outer_dash if mode=="Outer" else inner_dash, tags="calib")
+                self.canvas_video.create_polygon(*[val for pt in in_src for val in pt], outline="#ff00ff" if mode=="Outer" else "#00ffff", fill="", width=2, smooth=True, dash=inner_dash if mode=="Outer" else outer_dash, tags="calib")
+
             for key, pt in self.calib_pts.items():
                 self.canvas_video.create_oval(pt[0]-6, pt[1]-6, pt[0]+6, pt[1]+6, fill="#f1c40f", outline="black", tags=("calib", key))
                 
         except ValueError:
-            pass # Fails silently if user deletes all text in the entry box
+            pass
 
     def confirm_calibration(self):
         try:
@@ -695,8 +706,21 @@ class OFTTrackingTab(ttk.Frame):
         # --- CENTER TIME LOGIC (Dynamically Scaled Boundaries) ---
         min_px = getattr(self, 'inner_min_px', 100)
         max_px = getattr(self, 'inner_max_px', 300)
+        shape = getattr(self, 'arena_shape', tk.StringVar(value="Square")).get()
         
-        if min_px <= px <= max_px and min_px <= py <= max_px:
+        in_center = False
+        if shape == "Square":
+            if min_px <= px <= max_px and min_px <= py <= max_px:
+                in_center = True
+        else:
+            # Circle logic: distance from center
+            center_pt = self.map_size / 2.0
+            radius = (max_px - min_px) / 2.0
+            dist_sq = (px - center_pt)**2 + (py - center_pt)**2
+            if dist_sq <= radius**2:
+                in_center = True
+                
+        if in_center:
             if not hasattr(self, 'center_frames'): self.center_frames = 0
             self.center_frames += 1
             if hasattr(self, 'fps') and self.fps > 0:
@@ -711,18 +735,29 @@ class OFTTrackingTab(ttk.Frame):
     def draw_empty_grid_map(self):
         self.trajectory_canvas = np.zeros((self.map_size, self.map_size, 3), dtype=np.uint8)
         self.trajectory_canvas.fill(250) 
-        step = self.map_size // 4
         
-        # Draw base grid
-        for i in range(1, 4):
-            cv2.line(self.trajectory_canvas, (i * step, 0), (i * step, self.map_size), (220, 220, 220), 1)
-            cv2.line(self.trajectory_canvas, (0, i * step), (self.map_size, i * step), (220, 220, 220), 1)
-            
-        # Draw dynamic center zone box (Fixed to Pink in OpenCV BGR format: 180 Blue, 180 Green, 255 Red)
+        shape = getattr(self, 'arena_shape', tk.StringVar(value="Square")).get()
+        center = self.map_size // 2
         min_px = int(getattr(self, 'inner_min_px', 100))
         max_px = int(getattr(self, 'inner_max_px', 300))
-        cv2.rectangle(self.trajectory_canvas, (min_px, min_px), (max_px, max_px), (180, 180, 255), 2) 
         
+        if shape == "Square":
+            step = self.map_size // 4
+            for i in range(1, 4):
+                cv2.line(self.trajectory_canvas, (i * step, 0), (i * step, self.map_size), (220, 220, 220), 1)
+                cv2.line(self.trajectory_canvas, (0, i * step), (self.map_size, i * step), (220, 220, 220), 1)
+            cv2.rectangle(self.trajectory_canvas, (min_px, min_px), (max_px, max_px), (180, 180, 255), 2) 
+        else:
+            # Draw crosshairs
+            cv2.line(self.trajectory_canvas, (center, 0), (center, self.map_size), (220, 220, 220), 1)
+            cv2.line(self.trajectory_canvas, (0, center), (self.map_size, center), (220, 220, 220), 1)
+            
+            # Draw circular bounds
+            outer_radius = self.map_size // 2
+            inner_radius = (max_px - min_px) // 2
+            cv2.circle(self.trajectory_canvas, (center, center), outer_radius, (200, 200, 200), 1)
+            cv2.circle(self.trajectory_canvas, (center, center), inner_radius, (180, 180, 255), 2)
+            
         self.display_image_on_label(self.lbl_path, self.trajectory_canvas, self.map_display_size, self.map_display_size)
 
     def render_trajectory_view(self):
