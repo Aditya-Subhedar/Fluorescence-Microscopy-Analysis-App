@@ -84,6 +84,11 @@ class QuantificationTab(ttk.Frame):
         
         self.btn_auto = tk.Button(control_frame, text="Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 9, "bold"))
         self.btn_auto.pack(side=tk.LEFT, padx=5)
+
+        # ---> NEW: ROI Number Toggle <---
+        self.show_roi_numbers = True # Default state
+        self.btn_toggle_nums = tk.Button(control_frame, text="# Labels: ON", command=self.toggle_roi_numbers, fg="green", font=("Arial", 9, "bold"))
+        self.btn_toggle_nums.pack(side=tk.LEFT, padx=2)
         
         # 2. Drawing Tools Frame
         tool_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
@@ -623,6 +628,17 @@ class QuantificationTab(ttk.Frame):
             
         self.process_image()
 
+    def toggle_roi_numbers(self):
+        """Toggles the visibility of ROI indices on the preview canvas."""
+        self.show_roi_numbers = not getattr(self, 'show_roi_numbers', True)
+        
+        if self.show_roi_numbers:
+            self.btn_toggle_nums.config(text="# Labels: ON", fg="green")
+        else:
+            self.btn_toggle_nums.config(text="# Labels: OFF", fg="gray")
+            
+        self.schedule_update() # Redraw the canvas to apply the change
+
     # --- Slider Adjustments and Preview Updates ---
     def on_slider_move_continuous(self, val):
         self.schedule_update()
@@ -871,21 +887,23 @@ class QuantificationTab(ttk.Frame):
                         'Nearest Neighbor Dist (um)': round(nearest_neighbor_um, 2) if nearest_neighbor_um else 'N/A'
                     })
                     
-                    # Adaptive Text Sizing (Only renders numbers, no extra telemetry strings)
-                    if zoom < 0.8:
-                        if r.area < 300: continue
-                        font_scale = 0.35
-                    elif zoom < 1.8:
-                        if r.area < 50: continue
-                        font_scale = 0.45
-                    else:
-                        font_scale = 0.55
-                    
-                    text_label = f"{roi_id}"
-                    
-                    # Render high-contrast clear text vectors
-                    cv2.putText(overlay_rgb, text_label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 3, cv2.LINE_AA)
-                    cv2.putText(overlay_rgb, text_label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+                    # ---> NEW: TOGGLE CHECK <---
+                    if getattr(self, 'show_roi_numbers', True):
+                        # Adaptive Text Sizing (Only renders numbers)
+                        if zoom < 0.8:
+                            if r.area < 300: continue
+                            font_scale = 0.35
+                        elif zoom < 1.8:
+                            if r.area < 50: continue
+                            font_scale = 0.45
+                        else:
+                            font_scale = 0.55
+                        
+                        text_label = f"{roi_id}"
+                        
+                        # Render high-contrast clear text vectors
+                        cv2.putText(overlay_rgb, text_label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 3, cv2.LINE_AA)
+                        cv2.putText(overlay_rgb, text_label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
                 # =================================================================
                 
                 stats_meta = f"Fluorescent Area: {round(area_percentage, 2)}%{area_um2_str} | Clusters: {num_clusters}"
