@@ -60,8 +60,8 @@ class CytoQuantApp:
         # -----------------------------------------------------------------
         self.tab_home = tk.Frame(self.notebook, bg="#f8f9fa")
         
-        # Adding with an empty string hides the top text tab pill entirely
-        self.notebook.add(self.tab_home, text="") 
+        # Change the empty string to a Unicode home icon and add a little padding
+        self.notebook.add(self.tab_home, text="🏠")
         
         # Instantiate your analytical tabs (Indices 1 to 6)
         self.tab1 = PreProcessingTab(self.notebook, self)
