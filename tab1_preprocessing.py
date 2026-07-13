@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import cv2
 import numpy as np
-from PIL import Image, ImageTk
+import PIL
 import os
 import czifile
 import tifffile
@@ -428,10 +428,10 @@ class PreProcessingTab(ttk.Frame):
         new_h = max(1, int(orig_h * self.img_scale))
 
         # Use NEAREST resampling for smooth, lag-free rendering during trackpad movements
-        resized_img = self.current_pil_image.resize((new_w, new_h), Image.Resampling.NEAREST)
+        resized_img = self.current_pil_image.resize((new_w, new_h), PIL.Image.Resampling.NEAREST)
         
         # Saves the reference to self.tk_img to prevent canvas garbage collection bugs
-        self.tk_img = ImageTk.PhotoImage(resized_img)
+        self.tk_img = PIL.ImageTk.PhotoImage(resized_img)
 
         # Place image on canvas using our dynamic offset registers
         self.canvas.create_image(self.img_offset_x, self.img_offset_y, anchor=tk.NW, image=self.tk_img)
@@ -478,7 +478,7 @@ class PreProcessingTab(ttk.Frame):
 
     def build_dynamic_channels(self, channel_list):
         """
-        Dynamically rebuilds the UI for N channels. 
+        Dynamically rebuilds the UI for N channels using metadata. 
         Expects a list of dicts: [{'name': 'DAPI', 'hex': '#0000FF', 'rgb': (0,0,255)}, ...]
         """
         # 1. Clear existing UI rows
@@ -492,19 +492,18 @@ class PreProcessingTab(ttk.Frame):
         
         channel_names = []
 
-        # 2. Build new UI rows
+        # 2. Build new UI rows from automatically detected metadata channels
         for ch in channel_list:
             ch_name = ch["name"]
             hex_col = ch["hex"]
             
-            # Setup State Variables
+            # Setup State Variables mapped to the exact metadata string key name
             self.channel_vars[ch_name] = tk.BooleanVar(value=True)
             self.channel_colors[ch_name] = ch["rgb"]
             self.adj_data[ch_name] = {"c": 1.0, "b": 0.0}
             channel_names.append(ch_name)
             
-            # Create the UI Row (Modify this if your create_channel_row returns different things)
-            # We append the parent frame/widgets to self.channel_widgets so we can destroy them later
+            # Create the UI Row container frame
             row_frame = tk.Frame(self.chan_frame)
             row_frame.pack(fill=tk.X, pady=2)
             self.channel_widgets.append(row_frame)
@@ -513,39 +512,43 @@ class PreProcessingTab(ttk.Frame):
             chk = tk.Checkbutton(row_frame, text=ch_name, variable=self.channel_vars[ch_name], command=self.update_preview)
             chk.pack(side=tk.LEFT)
             
-            # Color Button (Assuming you want to change it later)
-            btn_color = tk.Button(row_frame, bg=hex_col, width=2)
+            # Color Button Indicator Box (Used as an alias for the older Label boxes)
+            # ---> THE CRITICAL FIX: We instantiate it explicitly and assign the dynamic command hook <---
+            btn_color = tk.Button(row_frame, bg=hex_col, width=3, cursor="hand2", relief="raised")
+            btn_color.config(command=lambda name=ch_name, btn=btn_color: self.pick_dynamic_color(name, btn))
             btn_color.pack(side=tk.RIGHT, padx=5)
             
-        # 3. Update Adjustments Combobox
+        # 3. Update Adjustments Combobox dropdown selectors
         self.combo_channel.config(values=channel_names)
         if channel_names:
             self.combo_channel.current(0)
             self.on_adj_channel_change()
 
-    # --- Pseudo Coloring Color Picker ---
-    def pick_color(self, channel_id):
-        """Opens a color picker and updates the specific channel's color block."""
+    # --- UPDATED DYNAMIC COLOR PICKER SYSTEM ---
+    def pick_dynamic_color(self, channel_name, target_button_widget):
+        """Opens the native color dialog window and updates the specific channel configuration mapping."""
         from tkinter import colorchooser
         
-        initial = {"R": self.color_r, "G": self.color_g, "B": self.color_b}[channel_id]
-        color_result = colorchooser.askcolor(title=f"Select Color for Channel {channel_id}", color=initial)
+        # 1. Safely fetch active tuple numbers and convert to hex for picker positioning
+        current_rgb = self.channel_colors.get(channel_name, (255, 255, 255))
+        init_hex = f"#{int(current_rgb[0]):02x}{int(current_rgb[1]):02x}{int(current_rgb[2]):02x}"
         
-        if color_result[0] is not None:
+        # ---> LAUNCHES THE EXACT COLOR SELECTION POPUP WINDOW <---
+        color_result = colorchooser.askcolor(initialcolor=init_hex, title=f"Select Color for Channel {channel_name}")
+        
+        # color_result shape layout: ((r, g, b), '#hex_code')
+        if color_result and color_result[0] is not None:
+            # 2. Extract integer tuples exactly how apply_pseudo_colors requires them
             rgb_tuple = tuple(int(c) for c in color_result[0])
             hex_color = color_result[1]
             
-            # Only update the button background now!
-            if channel_id == "R":
-                self.color_r = rgb_tuple
-                self.btn_color_r.config(bg=hex_color)
-            elif channel_id == "G":
-                self.color_g = rgb_tuple
-                self.btn_color_g.config(bg=hex_color)
-            elif channel_id == "B":
-                self.color_b = rgb_tuple
-                self.btn_color_b.config(bg=hex_color)
+            # 3. Store the new color weights using the unique metadata string key name
+            self.channel_colors[channel_name] = rgb_tuple
+            
+            # 4. Instantly refresh the visual button background on screen
+            target_button_widget.config(bg=hex_color)
                 
+            # 5. Redraw the canvas view preview blending changes live
             self.update_preview()
 
     def create_channel_row(self, parent, text, var, channel_id, default_hex):
@@ -1745,7 +1748,7 @@ class PreProcessingTab(ttk.Frame):
 
         # 3. FIX: Process matrix parameters and generate self.current_pil_image for panning
         view_image_uint8 = self.apply_image_math(self.active_raw_slice, self.current_z_idx)
-        self.current_pil_image = Image.fromarray(view_image_uint8)
+        self.current_pil_image = PIL.Image.fromarray(view_image_uint8)
 
         # 4. Fire renderer loop
         self.redraw_image()
@@ -1809,8 +1812,8 @@ class PreProcessingTab(ttk.Frame):
                 view_image = (view_image * 255.0).astype(np.uint8)
 
         # 2. Render processed matrix data slice to screen
-        view_pil_image = Image.fromarray(view_image)
-        self.tk_img = ImageTk.PhotoImage(view_pil_image)
+        view_pil_image = PIL.Image.fromarray(view_image)
+        self.tk_img = PIL.ImageTk.PhotoImage(view_pil_image)
         self.canvas.create_image(dest_x, dest_y, anchor=tk.NW, image=self.tk_img)
         self.rect_id = None 
 
