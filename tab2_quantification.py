@@ -723,12 +723,12 @@ class QuantificationTab(ttk.Frame):
                 
                 mask_filtered = cv2.inRange(self.cached_hsv, lower_bound, upper_bound)
                 
-                # 1. Base noise cleanup (YOUR EXACT CODE)
+                # 1. Base noise cleanup
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                 mask_clean = cv2.morphologyEx(mask_filtered, cv2.MORPH_OPEN, kernel)
                 mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
                 
-                # 2. DYNAMIC MORPHOLOGY (Fibers vs Cells - YOUR EXACT CODE)
+                # 2. DYNAMIC MORPHOLOGY (Fibers vs Cells)
                 circ_val = state.get('circ_min', 0)
                 if circ_val != 0:
                     k_size = int((abs(circ_val) / 100.0) * 20) * 2 + 1 
@@ -741,14 +741,10 @@ class QuantificationTab(ttk.Frame):
                 
                 mask_visual_uint8 = np.uint8(mask_clean)
                 
-                # =========================================================
-                # ---> INJECTED LOGIC: SEPARATE ARTIFACTS FROM FIBERS <---
-                # =========================================================
                 if circ_val < 0:
-                    # Bridge the fragmented visual mask into solid lines for logic evaluation ONLY
                     bridge_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
                     mask_logic_uint8 = cv2.morphologyEx(mask_visual_uint8, cv2.MORPH_CLOSE, bridge_kernel)
-                    ecc_threshold = (abs(circ_val) / 100.0) * 0.85  # Tweakable strictness
+                    ecc_threshold = (abs(circ_val) / 100.0) * 0.85 
                 else:
                     mask_logic_uint8 = mask_visual_uint8.copy()
                     ecc_threshold = 0.0
@@ -756,10 +752,20 @@ class QuantificationTab(ttk.Frame):
                 if not hasattr(self, 'eraser_permanent_mask') or self.eraser_permanent_mask is None:
                     self.eraser_permanent_mask = np.zeros_like(mask_visual_uint8)
                 
-                # Combine manual overrides onto LOGIC mask for area/shape evaluation
-                mask_combined_logic = cv2.bitwise_or(mask_logic_uint8, self.current_manual_add)
+                # Dynamic Lasso Fill for manual drawings
+                manual_add_filled = self.current_manual_add.copy() if hasattr(self, 'current_manual_add') else np.zeros_like(mask_visual_uint8)
+                if np.max(manual_add_filled) > 0:
+                    cnts_add, _ = cv2.findContours(manual_add_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(manual_add_filled, cnts_add, -1, 255, -1)
+                    
+                manual_remove_filled = self.current_manual_remove.copy() if hasattr(self, 'current_manual_remove') else np.zeros_like(mask_visual_uint8)
+                if np.max(manual_remove_filled) > 0:
+                    cnts_rem, _ = cv2.findContours(manual_remove_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(manual_remove_filled, cnts_rem, -1, 255, -1)
+                
+                mask_combined_logic = cv2.bitwise_or(mask_logic_uint8, manual_add_filled)
                 mask_combined_logic = cv2.bitwise_and(mask_combined_logic, cv2.bitwise_not(self.eraser_permanent_mask))
-                mask_combined_logic = cv2.bitwise_and(mask_combined_logic, cv2.bitwise_not(self.current_manual_remove))
+                mask_combined_logic = cv2.bitwise_and(mask_combined_logic, cv2.bitwise_not(manual_remove_filled))
                 
                 labeled_logic, _ = measure.label(mask_combined_logic > 0, return_num=True)
                 logic_regions = measure.regionprops(labeled_logic)
@@ -773,21 +779,16 @@ class QuantificationTab(ttk.Frame):
                         else:
                             valid_labels.append(r.label)
                 
-                # Create the approved logic silhouette
                 mask_approved_logic = np.isin(labeled_logic, valid_labels).astype(np.uint8) * 255
-                
-                # COOKIE-CUTTER: Keep only your original visual pixels that fall inside approved logic areas
                 mask_final = cv2.bitwise_and(mask_visual_uint8, mask_approved_logic)
                 
-                # Re-apply manual overrides to visual mask so drawings actually show up on screen
-                mask_final = cv2.bitwise_or(mask_final, self.current_manual_add)
+                mask_final = cv2.bitwise_or(mask_final, manual_add_filled)
                 mask_final = cv2.bitwise_and(mask_final, cv2.bitwise_not(self.eraser_permanent_mask))
-                mask_final = cv2.bitwise_and(mask_final, cv2.bitwise_not(self.current_manual_remove))
-                # =========================================================
+                mask_final = cv2.bitwise_and(mask_final, cv2.bitwise_not(manual_remove_filled))
 
                 self.current_mask = mask_final.copy()
                 
-                # 3. FINAL STATS CALCULATION (Using visual mask for accurate area data)
+                # 3. FINAL STATS & INDIVIDUAL ROI CALCULATION
                 labeled_final, num_clusters = measure.label(mask_final > 0, return_num=True)
                 final_regions = measure.regionprops(labeled_final, intensity_image=self.cached_gray)
 
@@ -817,6 +818,75 @@ class QuantificationTab(ttk.Frame):
                 contours, _ = cv2.findContours(mask_final, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 cv2.drawContours(overlay_rgb, contours, -1, (255, 255, 255), 2)
                 contours_drawn_manually = True
+                
+                # =================================================================
+                # ---> CLEAN INDEX-ONLY ROI RENDERING ENGINE <---
+                # =================================================================
+                state['roi_data'] = []
+                zoom = getattr(self, 'zoom_factor', 1.0)
+                
+                all_centroids = np.array([r.centroid for r in final_regions]) if num_clusters > 0 else np.array([])
+                
+                for idx, r in enumerate(final_regions):
+                    roi_id = idx + 1
+                    cy, cx = r.centroid
+                    cx, cy = int(cx), int(cy)
+                    
+                    mean_gray = r.intensity_mean
+                    int_density = r.area * mean_gray
+                    min_int = r.min_intensity
+                    max_int = r.max_intensity
+                    
+                    r_area_um2 = r.area * (pixel_size ** 2) if pixel_size else None
+                    roi_area_fraction = (r.area / total_pixels) * 100
+                    
+                    if num_clusters > 1:
+                        distances = np.linalg.norm(all_centroids - np.array([r.centroid]), axis=1)
+                        distances[idx] = np.inf 
+                        nearest_neighbor_px = np.min(distances)
+                        nearest_neighbor_um = nearest_neighbor_px * pixel_size if pixel_size else None
+                    else:
+                        nearest_neighbor_px = np.nan
+                        nearest_neighbor_um = np.nan
+                        
+                    perimeter = r.perimeter
+                    circularity = (4 * np.pi * r.area) / (perimeter ** 2) if perimeter > 0 else 0.0
+                    circularity = min(1.0, circularity) 
+                    
+                    state['roi_data'].append({
+                        'ROI ID': roi_id,
+                        'Centroid X (px)': cx,
+                        'Centroid Y (px)': cy,
+                        'Mean Gray Value': round(mean_gray, 2),
+                        'Integrated Density': round(int_density, 2),
+                        'Min Intensity': int(min_int),
+                        'Max Intensity': int(max_int),
+                        'Area (px)': r.area,
+                        'Area (sq um)': round(r_area_um2, 2) if r_area_um2 else 'Unknown',
+                        'Area Fraction (%)': round(roi_area_fraction, 4),
+                        'Perimeter (px)': round(perimeter, 2),
+                        'Circularity': round(circularity, 3),
+                        'Eccentricity': round(r.eccentricity, 3),
+                        'Nearest Neighbor Dist (px)': round(nearest_neighbor_px, 1) if not np.isnan(nearest_neighbor_px) else 'N/A',
+                        'Nearest Neighbor Dist (um)': round(nearest_neighbor_um, 2) if nearest_neighbor_um else 'N/A'
+                    })
+                    
+                    # Adaptive Text Sizing (Only renders numbers, no extra telemetry strings)
+                    if zoom < 0.8:
+                        if r.area < 300: continue
+                        font_scale = 0.35
+                    elif zoom < 1.8:
+                        if r.area < 50: continue
+                        font_scale = 0.45
+                    else:
+                        font_scale = 0.55
+                    
+                    text_label = f"{roi_id}"
+                    
+                    # Render high-contrast clear text vectors
+                    cv2.putText(overlay_rgb, text_label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 3, cv2.LINE_AA)
+                    cv2.putText(overlay_rgb, text_label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+                # =================================================================
                 
                 stats_meta = f"Fluorescent Area: {round(area_percentage, 2)}%{area_um2_str} | Clusters: {num_clusters}"
                 self.lbl_stats_integrated.config(text=f"{file_meta}\n{stats_meta}")
@@ -1485,12 +1555,19 @@ class QuantificationTab(ttk.Frame):
 
     # --- Export Data ---
     def export_excel(self):
+        import os
+        import numpy as np
+        import pandas as pd
+        from tkinter import messagebox, filedialog
+
         # 1. Check if the list is empty
         if not hasattr(self, 'image_states') or not self.image_states:
             messagebox.showwarning("No Data", "There is no analyzed data to export yet!\nPlease load and process images first.")
             return
             
         final_results = []
+        roi_sheets_data = {}  # Dictionary to hold ROI DataFrames for individual sheets
+
         for state in self.image_states:
             # We only want to export images that have actually been processed
             if 'stats' in state:
@@ -1536,7 +1613,7 @@ class QuantificationTab(ttk.Frame):
                 raw_intensity = state['stats'].get('mean_intensity', 0)
                 normalized_intensity = round((raw_intensity / 255.0) * 100, 2) 
 
-                # Microscopy-specific headers
+                # Microscopy-specific headers for Global Overview
                 final_results.append({
                     'File Name': file_name_only,
                     'Fluorescent Area (%)': area_percentage,
@@ -1549,6 +1626,26 @@ class QuantificationTab(ttk.Frame):
                     'Fiber Stripping (Circularity)': state.get('circ_min', 'N/A'),
                     'Manual Annotations Applied': used_manual
                 })
+
+                # Prepare individual sheet data for ROIs
+                roi_records = state.get('roi_data', [])
+                sheet_title = os.path.splitext(file_name_only)[0]
+                
+                # Excel limits sheet names to 31 characters
+                if len(sheet_title) > 30:
+                    sheet_title = sheet_title[:27] + "..."
+                    
+                if roi_records:
+                    roi_sheets_data[sheet_title] = pd.DataFrame(roi_records)
+                else:
+                    empty_df = pd.DataFrame(columns=[
+                        'ROI ID', 'Centroid X (px)', 'Centroid Y (px)', 'Mean Gray Value', 
+                        'Integrated Density', 'Min Intensity', 'Max Intensity', 'Area (px)', 
+                        'Area (sq um)', 'Area Fraction (%)', 'Perimeter (px)', 'Circularity', 
+                        'Eccentricity', 'Nearest Neighbor Dist (px)', 'Nearest Neighbor Dist (um)'
+                    ])
+                    empty_df.loc[0] = ['No ROIs Detected'] + ['-'] * 14
+                    roi_sheets_data[sheet_title] = empty_df
                 
         # 2. Check if we found stats but the final list is still empty
         if not final_results:
@@ -1564,17 +1661,63 @@ class QuantificationTab(ttk.Frame):
         
         if save_path:
             try:
-                import pandas as pd
-                df = pd.DataFrame(final_results)
+                df_global = pd.DataFrame(final_results)
                 
                 # Route to the correct pandas export engine based on the file extension
                 if save_path.lower().endswith('.csv'):
-                    df.to_csv(save_path, index=False, encoding='utf-8-sig') 
+                    # CSV cannot hold multiple sheets or styling, so we export only the Batch Overview
+                    df_global.to_csv(save_path, index=False, encoding='utf-8-sig') 
                 else:
-                    df.to_excel(save_path, index=False)
-                    
-                # Success popup removed!
-                
+                    # Excel Engine: Multi-sheet with Aesthetic Formatting
+                    with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
+                        # Write Sheet 1: Batch Overview
+                        df_global.to_excel(writer, sheet_name='Global Overview', index=False)
+                        
+                        # Write Sheets 2-N: Individual ROI Metrics
+                        for sheet_name, df_roi in roi_sheets_data.items():
+                            final_sheet_name = sheet_name
+                            counter = 1
+                            # Failsafe for duplicate file names resolving to the same sheet name
+                            while final_sheet_name in writer.sheets and final_sheet_name != 'Global Overview':
+                                final_sheet_name = f"{sheet_name[:25]}_{counter}"
+                                counter += 1
+                            df_roi.to_excel(writer, sheet_name=final_sheet_name, index=False)
+                        
+                        # --- Apply Aesthetic Styling ---
+                        from openpyxl.styles import Font, PatternFill, Alignment
+                        
+                        workbook = writer.book
+                        header_font = Font(bold=True, color="FFFFFF")
+                        # Scientific standard blue header
+                        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+                        center_align = Alignment(horizontal="center", vertical="center")
+                        
+                        for ws in workbook.worksheets:
+                            # Freeze the top header row
+                            ws.freeze_panes = 'A2'
+                            
+                            for col in ws.columns:
+                                max_length = 0
+                                col_letter = col[0].column_letter
+                                
+                                for cell in col:
+                                    if cell.row == 1:
+                                        cell.font = header_font
+                                        cell.fill = header_fill
+                                        cell.alignment = center_align
+                                    else:
+                                        cell.alignment = center_align
+                                        
+                                    try:
+                                        if len(str(cell.value)) > max_length:
+                                            max_length = len(str(cell.value))
+                                    except:
+                                        pass
+                                
+                                # Auto-adjust column width with a slight buffer (max capped at 40)
+                                adjusted_width = (max_length + 2)
+                                ws.column_dimensions[col_letter].width = min(adjusted_width, 40)
+                                
             except Exception as e:
                 messagebox.showerror("Export Error", f"Failed to export data:\n{e}")
 
