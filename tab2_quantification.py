@@ -104,10 +104,10 @@ class QuantificationTab(ttk.Frame):
         self.btn_eraser = tk.Button(tool_frame, text="🧹", relief=tk.RAISED, command=lambda: self.set_draw_mode("eraser"))
         self.btn_eraser.pack(side=tk.LEFT, padx=1)
 
-        self.btn_undo = tk.Button(tool_frame, text="↩️", command=self.undo_action, font=("Arial", 9)) # Compact icon only
+        self.btn_undo = tk.Button(tool_frame, text="←", command=self.undo_action, font=("Arial", 9)) # Compact icon only
         self.btn_undo.pack(side=tk.LEFT, padx=1)
 
-        self.btn_redo = tk.Button(tool_frame, text="↪️", command=self.redo_action, font=("Arial", 9)) # Compact icon only
+        self.btn_redo = tk.Button(tool_frame, text="→", command=self.redo_action, font=("Arial", 9)) # Compact icon only
         self.btn_redo.pack(side=tk.LEFT, padx=1)
         
         tk.Button(tool_frame, text="Clear All", command=self.clear_drawing, fg="red", font=("Arial", 9)).pack(side=tk.LEFT, padx=3)
