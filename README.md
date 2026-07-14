@@ -47,14 +47,14 @@ This application provides a robust, efficient, and accurate alternative to manua
 * **Live Quantification Metrics:** Instant quantitative calculation tracking total detected spines, active spine frequencies within target ranges (e.g., $20\text{--}30\,\mu m$), and structural branch densities.
 * **Session Logging:** Single-click tabular compilation exporting complete morphological tracking history arrays straight into structured Excel/CSV sheets for downstream figure generation.
 
-### 📍 Tab 6: Open Field Test (OFT) Tracking
-* **Adaptive Motion Tracking:** Utilizes a robust background subtraction engine (MOG2) paired with morphological filtering to continuously isolate and track the subject's center of mass across complex lighting environments.
-* **Real-World Spatial Calibration:** Features an interactive 4-point perspective transform matrix (Homography) that maps raw pixel coordinates to physical arena dimensions for both square and circle OFT chambers, distance (length and diameter) of both inner and outer zones of square and circle OFT chambers can be set manually and their geometry adapts automatically ensuring absolute distance accuracy regardless of camera angle distortion.
-* **Kinematic Noise Filtering:** Implements inertial smoothing and velocity deadzones to prevent false distance spikes ("teleportation" artifacts) when a user manually repositions the tracking bounding box during a trial. The tracker inertia and minimum deadzone distance is also adjustable in real time using sliders on the UI.
-* **Live Behavioral Analytics:** Real-time quantitative computation of total trajectory distance (cm), crossover count, and central zone spatial preference (time spent in center).
-* **Fluid Media Controls:** Integrated video playback system featuring global keyboard shortcut bindings (Spacebar for Play/Pause, ◄/► for precise 2-second seeking) safely decoupled from UI widget focus.
-* **Comprehensive Data Export:** Single-click production exports generating both structured quantitative metric tables (`.csv`) and high-contrast spatial trajectory maps (`.png`) for publication figures.
-
+### 📍 Tab 6: Automated Statistical Visualization & Graph Generation
+* **Flexible Plot Formats:** Ingests raw replicate data matrices to generate aggregated Grouped Bar charts, Box plots, or Violin plots calculating central tendencies mapped against user-selected Standard Deviation (SD) or Standard Error of the Mean (SEM) dispersion metrics.
+* **Replicate Dispersion Jitter:** Transparently overlays raw data points over bar charts using an adjustable, randomized Gaussian spatial jitter to prevent structural occlusion within high-density replicate clusters.
+* **Inferential Statistical Backend:** Computes automated parametric or non-parametric pairwise comparisons (Independent t-tests, Mann-Whitney U tests) and global variance profiles (One-Way ANOVA) directly within the interface against an alpha threshold (a = 0.05).
+* **Dynamic Significance Routing:** Automatically parses the maximum local data heights (y_max) to programmatically route adaptive, stacked significance brackets accented with standard academic nomenclature (*, **, ***) while applying built-in collision prevention.
+* **Granular Aesthetic Controls:** Exposes absolute custom control over minor presentation properties including independent bar widths, intra-group gap spacing, custom hexadecimal group colors, structural fill hatch patterns, and explicit Y-axis boundary scaling.
+* **Dynamic Layout Overlap Protection:** Integrates an adaptive canvas margin compression engine that dynamically shifts the subplot grid boundaries when assigning an external right-side legend, ensuring long group string titles never overlap with ticks or significance brackets.
+* **Lossless Figure Rendering:** Fully decoupled from UI viewport constraints to export crisp, publication-grade graph figures directly into 300 DPI loss-less `.png`, `.jpeg`, or `.tiff` formats.
 ---
 
 ## 🛠️ Technical Architecture & Stack
@@ -71,15 +71,19 @@ Ensure you have Python 3.8+ installed.
 
 1.  **Clone this repository:**
     ```bash
-    git clone [https://github.com/Aditya-Subhedar/Fluorescence-Microscopy-Analysis-App](https://github.com/your-username/fluorescence-microscopy-analysis-app.git)
-    cd fluorescence-microscopy-analysis-app
+    git clone [https://github.com/Aditya-Subhedar/Fluorescence-Microscopy-Analysis-App.git](https://github.com/Aditya-Subhedar/Fluorescence-Microscopy-Analysis-App.git)
+    cd Fluorescence-Microscopy-Analysis-App
     ```
 
 2.  **Create and activate a virtual environment:**
     ```bash
-    # Windows
+    # For Windows:
     python -m venv venv
     venv\Scripts\activate
+
+    # For macOS and Linux:
+    python3 -m venv venv
+    source venv/bin/activate
     ```
 
 3.  **Install dependencies:**
@@ -100,6 +104,6 @@ python main_app.py
 To compile the application into a standalone standalone desktop application (`.exe`) within your virtual environment, run the python module execution flag command:
 
 ```bash
-python -m PyInstaller --onefile --windowed --icon=logo.ico --name="CytoQuant_V19" --hidden-import=czifile --hidden-import=pylibCZIrw --hidden-import=tifffile --hidden-import=skimage main_app.py
+python -m PyInstaller --onefile --windowed --icon=logo.ico --name="CytoQuant" --hidden-import=czifile --hidden-import=pylibCZIrw --hidden-import=tifffile --hidden-import=skimage main_app.py
 ```
 The finished production package will be placed inside the generated `dist/` directory.
