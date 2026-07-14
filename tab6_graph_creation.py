@@ -69,7 +69,7 @@ class GraphCreationTab(tk.Frame):
         self.right_panel = tk.Frame(self.paned_window, bg="white")
         self.paned_window.add(self.right_panel, weight=1)
 
-        self.figure = Figure(figsize=(5, 4), dpi=100)
+        self.figure = Figure(figsize=(6, 4), dpi=100)
         self.figure.patch.set_facecolor('#ffffff')
         self.ax = self.figure.add_subplot(111)
         
@@ -143,15 +143,22 @@ class GraphCreationTab(tk.Frame):
 
     def apply_layout_transform(self):
         """ Shifts and resizes the entire subplots bounding area as a single unit """
-        base_left, base_right = 0.20, 0.92
-        base_bottom, base_top = 0.20, 0.90
+        # Dynamic right padding: if legend is outside, compress main frame to make side room
+        leg_pos = self.var_legend_pos.get() if hasattr(self, 'var_legend_pos') else "outside right"
+        
+        if leg_pos == "outside right":
+            base_left, base_right = 0.16, 0.75
+        else:
+            base_left, base_right = 0.16, 0.92
+            
+        base_bottom, base_top = 0.18, 0.88
         
         base_w = base_right - base_left
         base_h = base_top - base_bottom
         
         # Calculate true geometric center point with tracking offsets
-        cx = 0.56 + self.graph_pan_x
-        cy = 0.55 + self.graph_pan_y
+        cx = ((base_left + base_right) / 2) + self.graph_pan_x
+        cy = ((base_bottom + base_top) / 2) + self.graph_pan_y
         
         w = base_w * self.graph_zoom
         h = base_h * self.graph_zoom
@@ -181,7 +188,6 @@ class GraphCreationTab(tk.Frame):
         
         self.txt_data = tk.Text(frame_data, height=8, width=42, font=("Consolas", 9))
         self.txt_data.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        # Data box left completely empty intentionally
 
         # --- SECTION 2: GRAPH LABELS ---
         frame_labels = ttk.LabelFrame(parent, text="Step 2: Axis & Titles")
@@ -264,9 +270,9 @@ class GraphCreationTab(tk.Frame):
         tk.Entry(frame_fonts, textvariable=self.var_font_sizes).pack(fill=tk.X, padx=5, pady=2)
 
         tk.Label(frame_fonts, text="Legend Position:").pack(anchor="w", padx=5)
-        self.var_legend_pos = tk.StringVar(value="upper right")
+        self.var_legend_pos = tk.StringVar(value="outside right")
         ttk.Combobox(frame_fonts, textvariable=self.var_legend_pos, state="readonly",
-                     values=["upper right", "upper left", "lower right", "lower left", "best", "None"]).pack(fill=tk.X, padx=5, pady=2)
+                     values=["outside right", "upper right", "upper left", "lower right", "lower left", "best", "None"]).pack(fill=tk.X, padx=5, pady=2)
 
         # --- SECTION 7: AUTOMATED STATISTICS ---
         frame_sig = ttk.LabelFrame(parent, text="Step 7: Automated Statistics")
@@ -337,7 +343,6 @@ class GraphCreationTab(tk.Frame):
         df = self.parse_data_matrix()
         if df.empty:
             self.ax.axis('off')
-            # Handles the empty state gracefully, showing instructions in the viewport
             self.ax.text(0.5, 0.5, "Data table is empty.\nEnter data to generate plot.", 
                          ha='center', va='center', color='gray', fontsize=12)
             self.mpl_canvas.draw()
@@ -519,16 +524,22 @@ class GraphCreationTab(tk.Frame):
                     self.ax.set_ylim(float(lim_raw[0]), float(lim_raw[1]))
             except Exception: pass
         else:
-            ymax = max(highest_data_point * 1.15, dynamic_bracket_y * 1.05)
+            # Boost the top headroom slightly to safeguard stacked brackets from hitting titles
+            ymax = max(highest_data_point * 1.20, dynamic_bracket_y + (highest_data_point * 0.08))
             if ymax <= 0 or np.isnan(ymax): ymax = 1 
             self.ax.set_ylim(bottom=0, top=ymax)
 
         leg_pos = self.var_legend_pos.get()
         if leg_pos != "None":
             handles, labels = self.ax.get_legend_handles_labels()
-            if handles: self.ax.legend(handles[:n_subs], labels[:n_subs], loc=leg_pos, frameon=True, fontsize=tick_sz)
+            if handles:
+                if leg_pos == "outside right":
+                    self.ax.legend(handles[:n_subs], labels[:n_subs], loc="upper left", 
+                                   bbox_to_anchor=(1.03, 1.0), frameon=True, fontsize=tick_sz)
+                else:
+                    self.ax.legend(handles[:n_subs], labels[:n_subs], loc=leg_pos, frameon=True, fontsize=tick_sz)
 
-        # Apply structural changes and refresh rendering layout seamlessly
+        # Force structural layout recalculation
         self.apply_layout_transform()
 
     def export_plot(self):
