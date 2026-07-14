@@ -1,11 +1,10 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
-from PIL import Image, ImageTk, ImageDraw, ImageFont
+import PIL
 import os
 import copy
 import math
 
-class PanelCreationTab(ttk.Frame):
+class PanelCreationTab(tk.ttk.Frame):
     def __init__(self, parent, main_app=None):
         super().__init__(parent)
         self.main_app = main_app
@@ -52,7 +51,7 @@ class PanelCreationTab(ttk.Frame):
         root_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # --- LEFT PANEL: CONTROLLER ---
-        left_panel = tk.Frame(root_frame, width=280)
+        left_panel = tk.Frame(root_frame, width=500)
         left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         left_panel.pack_propagate(False)
         
@@ -75,7 +74,7 @@ class PanelCreationTab(ttk.Frame):
         self.spin_cols.delete(0, tk.END); self.spin_cols.insert(0, "2")
         
         tk.Label(grid_frame, text="Image Orientation:").pack(anchor=tk.W, pady=(5, 0))
-        self.combo_aspect = ttk.Combobox(grid_frame, values=["Original Ratio", "Square (1:1)", "Landscape (4:3)", "Portrait (3:4)"], state="readonly")
+        self.combo_aspect = tk.ttk.Combobox(grid_frame, values=["Original Ratio", "Square (1:1)", "Landscape (4:3)", "Portrait (3:4)"], state="readonly")
         self.combo_aspect.pack(fill=tk.X, pady=2)
         self.combo_aspect.set("Original Ratio")
         
@@ -102,14 +101,14 @@ class PanelCreationTab(ttk.Frame):
         self.entry_row_titles.pack(fill=tk.X, pady=2)
 
         tk.Label(titles_frame, text="Row Title Orientation:").pack(anchor=tk.W)
-        self.combo_row_orient = ttk.Combobox(titles_frame, values=["Horizontal", "Sideways (90° CCW)"], state="readonly")
+        self.combo_row_orient = tk.ttk.Combobox(titles_frame, values=["Horizontal", "Sideways (90° CCW)"], state="readonly")
         self.combo_row_orient.pack(fill=tk.X, pady=2)
         self.combo_row_orient.set("Sideways (90° CCW)")
         
         labels_config_frame = tk.Frame(titles_frame)
         labels_config_frame.pack(fill=tk.X, pady=(5, 0))
         tk.Label(labels_config_frame, text="Subpanel labels (A, B, C):").pack(side=tk.LEFT)
-        self.combo_sublabels = ttk.Combobox(labels_config_frame, values=["Inside Top-Left", "Outside Top-Left", "None"], state="readonly", width=15)
+        self.combo_sublabels = tk.ttk.Combobox(labels_config_frame, values=["Inside Top-Left", "Outside Top-Left", "None"], state="readonly", width=15)
         self.combo_sublabels.pack(side=tk.RIGHT)
         self.combo_sublabels.set("Inside Top-Left")
 
@@ -120,7 +119,7 @@ class PanelCreationTab(ttk.Frame):
         font_family_frame = tk.Frame(font_frame)
         font_family_frame.pack(fill=tk.X, pady=2)
         tk.Label(font_family_frame, text="Font Family:").pack(side=tk.LEFT)
-        self.combo_font = ttk.Combobox(font_family_frame, values=["Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma", "Georgia"], state="readonly", width=12)
+        self.combo_font = tk.ttk.Combobox(font_family_frame, values=["Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma", "Georgia"], state="readonly", width=12)
         self.combo_font.pack(side=tk.RIGHT)
         self.combo_font.set("Arial")
 
@@ -172,7 +171,7 @@ class PanelCreationTab(ttk.Frame):
         
 
         tk.Button(
-            export_frame, text="💾 Export Panel High-Res", 
+            export_frame, text="💾 Export High-Res Panel", 
             command=self.action_export_panel, bg="#2e7d32", fg="white", 
             font=("Arial", 11, "bold"), height=2
         ).pack(fill=tk.X, pady=5)
@@ -299,7 +298,7 @@ class PanelCreationTab(ttk.Frame):
             self.draw_interactive_elements()
             
         elif tool == "text":
-            text_val = simpledialog.askstring("Input Text", "Enter text to add to panel:")
+            text_val = tk.simpledialog.askstring("Input Text", "Enter text to add to panel:")
             if text_val:
                 new_item = {'type': 'text', 'x1': self.start_x, 'y1': self.start_y, 'x2': self.start_x+10, 'y2': self.start_y+10, 'text': text_val, 'scalable': False, 'color': '#FFFF00'}
                 self.annotations.append(new_item)
@@ -398,7 +397,7 @@ class PanelCreationTab(ttk.Frame):
             self.generate_canvas_placeholders()
             if self.composite_pil is not None: self.action_build_composite()
         else:
-            messagebox.showinfo("Info", "Nothing to undo in selections.")
+            tk.messagebox.showinfo("Info", "Nothing to undo in selections.")
 
     def redo(self, event=None):
         if self.redo_stack:
@@ -410,7 +409,7 @@ class PanelCreationTab(ttk.Frame):
             self.generate_canvas_placeholders()
             if self.composite_pil is not None: self.action_build_composite()
         else:
-            messagebox.showinfo("Info", "Nothing to redo in selections.")
+            tk.messagebox.showinfo("Info", "Nothing to redo in selections.")
 
     def get_cell_aspect(self):
         choice = self.combo_aspect.get()
@@ -421,7 +420,7 @@ class PanelCreationTab(ttk.Frame):
             for (r, c), path in self.cell_images.items():
                 if path and os.path.exists(path):
                     try:
-                        with Image.open(path) as img:
+                        with PIL.Image.open(path) as img:
                             rot = self.cell_rotations.get((r, c), 0)
                             if rot in [90, 270]: return img.size[1] / img.size[0]
                             return img.size[0] / img.size[1]
@@ -430,7 +429,7 @@ class PanelCreationTab(ttk.Frame):
         return 1.0
 
     def pick_sublabel_color(self):
-        color_choice = colorchooser.askcolor(initialcolor="#ffffff", title="Select Subpanel Label Color")
+        color_choice = tk.colorchooser.askcolor(initialcolor="#ffffff", title="Select Subpanel Label Color")
         if color_choice and color_choice[0] is not None:
             self.sublabel_color_rgb = tuple(int(c) for c in color_choice[0])
             hex_color = color_choice[1]
@@ -458,13 +457,13 @@ class PanelCreationTab(ttk.Frame):
             self.annotations.clear() 
             
             if list(self.cell_images.keys()) and (r != len(set(k[0] for k in self.cell_images.keys())) or c != len(set(k[1] for k in self.cell_images.keys()))):
-                if messagebox.askyesno("Clear Images?", "Grid dimensions changed. Clear currently selected images?"):
+                if tk.messagebox.askyesno("Clear Images?", "Grid dimensions changed. Clear currently selected images?"):
                     self.cell_images.clear()
                     self.cell_rotations.clear()
             
             self.generate_canvas_placeholders()
         except ValueError:
-            messagebox.showerror("Error", "Invalid Row/Col numbers.")
+            tk.messagebox.showerror("Error", "Invalid Row/Col numbers.")
 
     def generate_canvas_placeholders(self):
         self.canvas.delete("all")
@@ -540,7 +539,7 @@ class PanelCreationTab(ttk.Frame):
 
     def select_images_for_cell(self, start_row, start_col):
         f_types = [("Microscopy Images", "*.tif *.tiff *.png *.jpg *.jpeg"), ("All Files", "*.*")]
-        paths = filedialog.askopenfilenames(title=f"Select Image(s) starting from Row {start_row}, Col {start_col}", filetypes=f_types)
+        paths = tk.filedialog.askopenfilenames(title=f"Select Image(s) starting from Row {start_row}, Col {start_col}", filetypes=f_types)
         if not paths: return
         
         self.save_selection_state()
@@ -566,7 +565,7 @@ class PanelCreationTab(ttk.Frame):
 
     def select_images_for_row(self, r):
         f_types = [("Microscopy Images", "*.tif *.tiff *.png *.jpg *.jpeg"), ("All Files", "*.*")]
-        paths = filedialog.askopenfilenames(title=f"Select Image(s) for Row {r+1}", filetypes=f_types)
+        paths = tk.filedialog.askopenfilenames(title=f"Select Image(s) for Row {r+1}", filetypes=f_types)
         if not paths: return
         
         self.save_selection_state()
@@ -589,7 +588,7 @@ class PanelCreationTab(ttk.Frame):
 
     def select_images_for_col(self, c):
         f_types = [("Microscopy Images", "*.tif *.tiff *.png *.jpg *.jpeg"), ("All Files", "*.*")]
-        paths = filedialog.askopenfilenames(title=f"Select Image(s) for Col {c+1}", filetypes=f_types)
+        paths = tk.filedialog.askopenfilenames(title=f"Select Image(s) for Col {c+1}", filetypes=f_types)
         if not paths: return
         
         self.save_selection_state()
@@ -612,15 +611,15 @@ class PanelCreationTab(ttk.Frame):
 
     def draw_cell_thumbnail(self, r, c, x1, y1, x2, y2, path):
         try:
-            pil_img = Image.open(path)
+            pil_img = PIL.Image.open(path)
             rot = self.cell_rotations.get((r, c), 0)
             if rot != 0: pil_img = pil_img.rotate(rot, expand=True)
 
             target_w = max(1, int(self.canvas_cell_w))
             target_h = max(1, int(self.canvas_cell_h))
             
-            thumb = pil_img.resize((target_w, target_h), Image.Resampling.BILINEAR)
-            tk_thumb = ImageTk.PhotoImage(thumb)
+            thumb = pil_img.resize((target_w, target_h), PIL.Image.Resampling.BILINEAR)
+            tk_thumb = PIL.ImageTk.PhotoImage(thumb)
             
             self.cell_thumbnails[(r, c)] = tk_thumb
             self.canvas.create_image(x1, y1, image=tk_thumb, anchor=tk.NW)
@@ -641,12 +640,12 @@ class PanelCreationTab(ttk.Frame):
             self.canvas.tag_bind(rot_cw_id, "<Button-1>", lambda e, row=r, col=c: self.rotate_cell(row, col, 90))
             
         except Exception as e:
-            messagebox.showerror("Load Error", f"Failed to load image:\n{str(e)}")
+            tk.messagebox.showerror("Load Error", f"Failed to load image:\n{str(e)}")
             if (r, c) in self.cell_images: del self.cell_images[(r, c)]
 
     def action_build_composite(self):
         if not self.cell_images:
-            messagebox.showwarning("Warning", "Select images first.")
+            tk.messagebox.showwarning("Warning", "Select images first.")
             return
 
         rows, cols = self.grid_dims
@@ -654,7 +653,7 @@ class PanelCreationTab(ttk.Frame):
         
         try:
             ref_path = next(iter(self.cell_images.values()))
-            with Image.open(ref_path) as img:
+            with PIL.Image.open(ref_path) as img:
                 ref_cell_w = img.size[0]
         except:
             ref_cell_w = 1200
@@ -685,15 +684,15 @@ class PanelCreationTab(ttk.Frame):
             if not bold: fonts_to_try = (fonts_to_try[1], fonts_to_try[0])
             
             for f in fonts_to_try + ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf"):
-                try: return ImageFont.truetype(f, size_px)
+                try: return PIL.ImageFont.truetype(f, size_px)
                 except: continue
-            return ImageFont.load_default()
+            return PIL.ImageFont.load_default()
 
         font_titles = get_pil_font(title_font_size, bold=True)
         font_sublabels = get_pil_font(sublabel_font_size, bold=True)
         
-        dummy_img = Image.new("RGBA", (10, 10))
-        dummy_draw = ImageDraw.Draw(dummy_img)
+        dummy_img = PIL.Image.new("RGBA", (10, 10))
+        dummy_draw = PIL.ImageDraw.Draw(dummy_img)
         
         max_row_text_w = 0
         for title in row_title_strs:
@@ -720,8 +719,8 @@ class PanelCreationTab(ttk.Frame):
         total_w = left_margin + cols * target_cell_w + (cols - 1) * gap_orig + right_margin
         total_h = top_margin + rows * target_cell_h + (rows - 1) * gap_orig + bottom_margin
         
-        self.composite_pil = Image.new("RGBA", (int(total_w), int(total_h)), (255, 255, 255, 255))
-        draw = ImageDraw.Draw(self.composite_pil)
+        self.composite_pil = PIL.Image.new("RGBA", (int(total_w), int(total_h)), (255, 255, 255, 255))
+        draw = PIL.ImageDraw.Draw(self.composite_pil)
         
         title_color_rgba = self.title_color_rgb + (255,)
         sublabel_color_rgba = self.sublabel_color_rgb + (255,)
@@ -742,8 +741,8 @@ class PanelCreationTab(ttk.Frame):
             
             if self.combo_row_orient.get() == "Sideways (90° CCW)":
                 txt_w, txt_h = max(1, int(tw + 4)), max(1, int(th + 4))
-                text_layer = Image.new("RGBA", (txt_w, txt_h), (0, 0, 0, 0))
-                layer_draw = ImageDraw.Draw(text_layer)
+                text_layer = PIL.Image.new("RGBA", (txt_w, txt_h), (0, 0, 0, 0))
+                layer_draw = PIL.ImageDraw.Draw(text_layer)
                 layer_draw.text((-bbox[0], -bbox[1]), title, fill=title_color_rgba, font=font_titles)
                 rotated_txt = text_layer.rotate(90, expand=True)
                 rt_w, rt_h = rotated_txt.size
@@ -759,10 +758,10 @@ class PanelCreationTab(ttk.Frame):
                 
                 if path:
                     try:
-                        with Image.open(path) as img:
+                        with PIL.Image.open(path) as img:
                             rot = self.cell_rotations.get((r, c), 0)
                             if rot != 0: img = img.rotate(rot, expand=True)
-                            scaled_img = img.convert("RGBA").resize((int(target_cell_w), int(target_cell_h)), Image.Resampling.LANCZOS)
+                            scaled_img = img.convert("RGBA").resize((int(target_cell_w), int(target_cell_h)), PIL.Image.Resampling.LANCZOS)
                             self.composite_pil.alpha_composite(scaled_img, (int(px), int(py)))
                     except Exception:
                         draw.rectangle([px, py, px+target_cell_w, py+target_cell_h], outline="red", width=4)
@@ -788,7 +787,7 @@ class PanelCreationTab(ttk.Frame):
         self.pan_y = (ch - (ih * self.view_scale)) / 2
 
         self.render_canvas_preview()
-        messagebox.showinfo("Success", "High-Resolution composite built. You can now pan, zoom, and draw annotations directly on it.")
+        tk.messagebox.showinfo("Success", "High-Resolution composite built. You can now pan, zoom, and draw annotations directly on it.")
 
     # --- SEPARATED RENDERING ENGINE ---
     
@@ -802,8 +801,8 @@ class PanelCreationTab(ttk.Frame):
         target_w = max(1, int(self.composite_pil.size[0] * self.view_scale))
         target_h = max(1, int(self.composite_pil.size[1] * self.view_scale))
         
-        resized_comp = self.composite_pil.resize((target_w, target_h), Image.Resampling.BILINEAR)
-        self.tk_img = ImageTk.PhotoImage(resized_comp)
+        resized_comp = self.composite_pil.resize((target_w, target_h), PIL.Image.Resampling.BILINEAR)
+        self.tk_img = PIL.ImageTk.PhotoImage(resized_comp)
         
         self.canvas.create_image(self.pan_x, self.pan_y, anchor=tk.NW, image=self.tk_img, tags="bg")
         self.canvas.tag_lower("bg")
@@ -852,18 +851,18 @@ class PanelCreationTab(ttk.Frame):
     def action_export_panel(self, event=None):
         if self.composite_pil is None:
             if not self.cell_images:
-                messagebox.showwarning("Warning", "Assign images first.")
+                tk.messagebox.showwarning("Warning", "Assign images first.")
                 return
             self.action_build_composite()
             if self.composite_pil is None: return
             
         f_types = [("PNG Image", "*.png"), ("JPEG Image", "*.jpg"), ("TIFF Image", "*.tif")]
-        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=f_types, title="Export Final Panel")
+        path = tk.filedialog.asksaveasfilename(defaultextension=".png", filetypes=f_types, title="Export Final Panel")
         if not path: return
         
         try:
             export_pil = self.composite_pil.copy()
-            draw = ImageDraw.Draw(export_pil)
+            draw = PIL.ImageDraw.Draw(export_pil)
             
             img_w, img_h = export_pil.size
             dyn_thick = max(3, int(min(img_w, img_h) * 0.003))
@@ -890,9 +889,9 @@ class PanelCreationTab(ttk.Frame):
 
                 elif item['type'] == 'text':
                     try:
-                        fnt = ImageFont.truetype("arialbd.ttf", int(dyn_thick * 12))
+                        fnt = PIL.ImageFont.truetype("arialbd.ttf", int(dyn_thick * 12))
                     except:
-                        fnt = ImageFont.load_default()
+                        fnt = PIL.ImageFont.load_default()
                     draw.text((x1, y1), item.get('text', ''), fill="yellow", font=fnt)
 
             _, ext = os.path.splitext(path)
@@ -900,6 +899,6 @@ class PanelCreationTab(ttk.Frame):
             final_export = export_pil.convert(mode)
             final_export.save(path)
             
-            messagebox.showinfo("Export Complete", f"Figure exported successfully:\n{path}")
+            tk.messagebox.showinfo("Export Complete", f"Figure exported successfully:\n{path}")
         except Exception as e:
-            messagebox.showerror("Export Error", f"Failed to save asset:\n{str(e)}")
+            tk.messagebox.showerror("Export Error", f"Failed to save asset:\n{str(e)}")
