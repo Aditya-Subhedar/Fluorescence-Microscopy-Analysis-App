@@ -42,7 +42,7 @@ class MaskMergerTab(ttk.Frame):
         root_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # --- LEFT PANEL ---
-        left_panel = tk.Frame(root_frame, width=260)
+        left_panel = tk.Frame(root_frame, width=400)
         left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         left_panel.pack_propagate(False)
         
