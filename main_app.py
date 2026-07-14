@@ -1,3 +1,9 @@
+import ctypes
+try:
+    # Tells Windows to make the Tkinter app DPI-aware for crisp fonts
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    pass
 import tkinter as tk
 from tkinter import ttk
 import os
@@ -17,13 +23,14 @@ from tab2_quantification import QuantificationTab
 from tab3_representation import MaskMergerTab
 from tab4_panel_creation import PanelCreationTab 
 from tab5_golgi_cox_analysis import GolgiTab
-from tab6_oft_tracking import OFTTrackingTab
+# Swapped to your new Graph Creation Tab
+from tab6_graph_creation import GraphCreationTab
 
 class CytoQuantApp:
     def __init__(self, root):
         self.root = root
         self.root.title("CytoQuant Version 26")
-        self.root.geometry("1920x1080")
+        self.root.state('zoomed')
 
         # Load Icon
         icon_path = resource_path("logo.ico")
@@ -79,8 +86,9 @@ class CytoQuantApp:
         self.tab5 = GolgiTab(self.notebook)
         self.notebook.add(self.tab5, text="5. Golgi-Cox Analysis    ")
 
-        self.tab6 = OFTTrackingTab(self.notebook)
-        self.notebook.add(self.tab6, text="6. OFT Tracking  ")
+        # Swapped instantiation to GraphCreationTab
+        self.tab6 = GraphCreationTab(self.notebook)
+        self.notebook.add(self.tab6, text="6. Graph Generation  ")
 
         # Build the visual components of the grid menu on our home page
         self.build_welcome_dashboard()
@@ -161,11 +169,12 @@ class CytoQuantApp:
                 "desc": "Perform specialized Sholl analysis for neuronal morphology. Map dendritic networks, measure branching complexity, and quantify active spine densities across concentric distances from the soma.", 
                 "color": "#c62828", "icon": "🧠", "grid": (1, 1)
             },
+            # Swapped dashboard configurations to Graph Generation
             {
                 "target_idx": 6, 
-                "title": "6. Open Field Test Tracking", 
-                "desc": "Track animal movement trajectories in Open Field Test arenas. Calibrate real-world physical dimensions, map center versus periphery occupancy, and automatically extract behavioral metrics like total distance, center time, zone crossovers and trajectory.", 
-                "color": "#00838f", "icon": "🐀", "grid": (1, 2)
+                "title": "6. Graph Generation", 
+                "desc": "Convert quantitative fluorescent and morphometric analysis sheets into publication-ready figures. Customize layouts, map statistical significance comparisons, compile error bars, and export high-DPI vector graphics.", 
+                "color": "#00838f", "icon": "📈", "grid": (1, 2)
             }
         ]
 
