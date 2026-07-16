@@ -708,11 +708,14 @@ class QuantificationTab(ttk.Frame):
                 mask_base = self.override_mask_data.copy()
                 
                 # RETAIN MANUAL TOOLS: Let pencil additions and eraser modifications alter this base map
-                if self.current_manual_add is not None:
+                # (Added shape safety checks here as well)
+                if hasattr(self, 'current_manual_add') and self.current_manual_add is not None and self.current_manual_add.shape == mask_base.shape:
                     mask_base = cv2.bitwise_or(mask_base, self.current_manual_add)
-                if getattr(self, 'eraser_permanent_mask', None) is not None:
+                    
+                if getattr(self, 'eraser_permanent_mask', None) is not None and self.eraser_permanent_mask.shape == mask_base.shape:
                     mask_base = cv2.bitwise_and(mask_base, cv2.bitwise_not(self.eraser_permanent_mask))
-                if self.current_manual_remove is not None:
+                    
+                if hasattr(self, 'current_manual_remove') and self.current_manual_remove is not None and self.current_manual_remove.shape == mask_base.shape:
                     mask_base = cv2.bitwise_and(mask_base, cv2.bitwise_not(self.current_manual_remove))
                     
                 self.current_mask = mask_base.copy()
@@ -765,19 +768,37 @@ class QuantificationTab(ttk.Frame):
                     mask_logic_uint8 = mask_visual_uint8.copy()
                     ecc_threshold = 0.0
                 
-                if not hasattr(self, 'eraser_permanent_mask') or self.eraser_permanent_mask is None:
+                # --- SHAPE-SAFE MASK INITIALIZATION ---
+                # 1. Permanent Eraser Mask Safety Check
+                if (not hasattr(self, 'eraser_permanent_mask') or 
+                    self.eraser_permanent_mask is None or 
+                    self.eraser_permanent_mask.shape != mask_visual_uint8.shape):
                     self.eraser_permanent_mask = np.zeros_like(mask_visual_uint8)
                 
-                # Dynamic Lasso Fill for manual drawings
-                manual_add_filled = self.current_manual_add.copy() if hasattr(self, 'current_manual_add') else np.zeros_like(mask_visual_uint8)
+                # 2. Manual Add Mask Safety Check (Dynamic Lasso Fill)
+                if (hasattr(self, 'current_manual_add') and 
+                    self.current_manual_add is not None and 
+                    self.current_manual_add.shape == mask_visual_uint8.shape):
+                    manual_add_filled = self.current_manual_add.copy()
+                else:
+                    manual_add_filled = np.zeros_like(mask_visual_uint8)
+                    
                 if np.max(manual_add_filled) > 0:
                     cnts_add, _ = cv2.findContours(manual_add_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     cv2.drawContours(manual_add_filled, cnts_add, -1, 255, -1)
                     
-                manual_remove_filled = self.current_manual_remove.copy() if hasattr(self, 'current_manual_remove') else np.zeros_like(mask_visual_uint8)
+                # 3. Manual Remove Mask Safety Check
+                if (hasattr(self, 'current_manual_remove') and 
+                    self.current_manual_remove is not None and 
+                    self.current_manual_remove.shape == mask_visual_uint8.shape):
+                    manual_remove_filled = self.current_manual_remove.copy()
+                else:
+                    manual_remove_filled = np.zeros_like(mask_visual_uint8)
+                    
                 if np.max(manual_remove_filled) > 0:
                     cnts_rem, _ = cv2.findContours(manual_remove_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     cv2.drawContours(manual_remove_filled, cnts_rem, -1, 255, -1)
+                # ---------------------------------------
                 
                 mask_combined_logic = cv2.bitwise_or(mask_logic_uint8, manual_add_filled)
                 mask_combined_logic = cv2.bitwise_and(mask_combined_logic, cv2.bitwise_not(self.eraser_permanent_mask))
@@ -887,7 +908,7 @@ class QuantificationTab(ttk.Frame):
                         'Nearest Neighbor Dist (um)': round(nearest_neighbor_um, 2) if nearest_neighbor_um else 'N/A'
                     })
                     
-                    # ---> NEW: TOGGLE CHECK <---
+                    # ---> TOGGLE CHECK <---
                     if getattr(self, 'show_roi_numbers', True):
                         # Adaptive Text Sizing (Only renders numbers)
                         if zoom < 0.8:
@@ -917,7 +938,7 @@ class QuantificationTab(ttk.Frame):
                 self.lbl_stats_integrated.config(text=f"{file_meta}\nView: Original Image (Auto Detect OFF)")
 
             # ---> DRAW TRANSLUCENT TEMPORARY ERASER OUTLINES WHILE DRAGGING <---
-            if self.current_manual_remove is not None and np.any(self.current_manual_remove > 0):
+            if hasattr(self, 'current_manual_remove') and self.current_manual_remove is not None and np.any(self.current_manual_remove > 0):
                 rem_contours, _ = cv2.findContours(self.current_manual_remove, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 red_border_overlay = overlay_rgb.copy()
                 cv2.drawContours(red_border_overlay, rem_contours, -1, (255, 0, 0), 2)
@@ -925,7 +946,7 @@ class QuantificationTab(ttk.Frame):
 
             # ---> PENCIL & CIRCLE BORDERS (Only drawn if not already rendered inside Case 1 / Case 2) <---
             if not contours_drawn_manually:
-                if self.current_manual_add is not None and np.any(self.current_manual_add > 0):
+                if hasattr(self, 'current_manual_add') and self.current_manual_add is not None and np.any(self.current_manual_add > 0):
                     add_contours, _ = cv2.findContours(self.current_manual_add, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     white_border_overlay = overlay_rgb.copy()
                     cv2.drawContours(white_border_overlay, add_contours, -1, (255, 255, 255), 2)
