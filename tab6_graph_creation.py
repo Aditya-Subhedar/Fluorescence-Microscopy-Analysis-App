@@ -22,11 +22,13 @@ class GraphCreationTab(tk.Frame):
     def __init__(self, parent):
         super().__init__(parent, bg="#f8f9fa")
         
-        # Rigid layout state variables for unified canvas manipulation
         self.graph_zoom = 1.0
         self.graph_pan_x = 0.0
         self.graph_pan_y = 0.0
         self.is_panning = False
+        
+        self.data_df = None
+        self.file_mappings = {} 
         
         self.setup_ui()
 
@@ -36,9 +38,6 @@ class GraphCreationTab(tk.Frame):
         self.paned_window = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         self.paned_window.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # ==========================================
-        # LEFT PANEL: SCROLLABLE CONTROLS
-        # ==========================================
         self.left_container = tk.Frame(self.paned_window, width=400, bg="#f0f0f0")
         self.paned_window.add(self.left_container, weight=0)
 
@@ -60,12 +59,8 @@ class GraphCreationTab(tk.Frame):
 
         self._build_control_widgets(self.scrollable_frame)
         
-        # Structurally isolate scroll interactions only to the left UI panel tree
         self.bind_left_scroll_recursive(self.left_container)
 
-        # ==========================================
-        # RIGHT PANEL: MATPLOTLIB VIEWPORT
-        # ==========================================
         self.right_panel = tk.Frame(self.paned_window, bg="white")
         self.paned_window.add(self.right_panel, weight=1)
 
@@ -76,7 +71,6 @@ class GraphCreationTab(tk.Frame):
         self.mpl_canvas = FigureCanvasTkAgg(self.figure, master=self.right_panel)
         self.canvas = self.mpl_canvas.get_tk_widget()
         
-        # Connect listeners for rigid canvas transformation interactions
         self.figure.canvas.mpl_connect('scroll_event', self.on_zoom_layout)
         self.figure.canvas.mpl_connect('button_press_event', self.on_pan_start)
         self.figure.canvas.mpl_connect('motion_notify_event', self.on_pan_move)
@@ -91,7 +85,6 @@ class GraphCreationTab(tk.Frame):
         self.generate_plot()
 
     def bind_left_scroll_recursive(self, widget):
-        """ Attaches mousewheel tracking only to left-panel elements """
         widget.bind("<MouseWheel>", self._on_left_panel_scroll)
         widget.bind("<Button-4>", self._on_left_panel_scroll)
         widget.bind("<Button-5>", self._on_left_panel_scroll)
@@ -104,18 +97,18 @@ class GraphCreationTab(tk.Frame):
         elif event.num == 5 or event.delta < 0:
             self.canvas_left.yview_scroll(1, "units")
 
-    def on_zoom_layout(self, event):
-        """ Scales the overall dimensions of the entire graph image uniformly """
-        if event.step > 0:
-            self.graph_zoom *= 1.15  # Zoom In
-        else:
-            self.graph_zoom /= 1.15  # Zoom Out
+    def _on_canvas_configure(self, event):
+        self.canvas_left.itemconfig(self.canvas_window, width=event.width)
 
+    def on_zoom_layout(self, event):
+        if event.step > 0:
+            self.graph_zoom *= 1.15
+        else:
+            self.graph_zoom /= 1.15
         self.graph_zoom = max(0.15, min(self.graph_zoom, 6.0))
         self.apply_layout_transform()
 
     def on_pan_start(self, event):
-        """ Starts tracking pixel coordinates on left-click / trackpad press """
         if event.button == 1:
             self.is_panning = True
             self.start_pixel_x = event.x
@@ -124,39 +117,29 @@ class GraphCreationTab(tk.Frame):
             self.orig_pan_y = self.graph_pan_y
 
     def on_pan_move(self, event):
-        """ Shifts the entire rigid block relative to cursor movement """
         if self.is_panning and event.x is not None and event.y is not None:
             dx_pixels = event.x - self.start_pixel_x
             dy_pixels = event.y - self.start_pixel_y
-            
             fig_w = self.figure.bbox.width
             fig_h = self.figure.bbox.height
-            
-            # Translate raw pixel delta into localized viewport percentages
             self.graph_pan_x = self.orig_pan_x + (dx_pixels / fig_w)
             self.graph_pan_y = self.orig_pan_y + (dy_pixels / fig_h)
-            
             self.apply_layout_transform()
 
     def on_pan_end(self, event):
         self.is_panning = False
 
     def apply_layout_transform(self):
-        """ Shifts and resizes the entire subplots bounding area as a single unit """
-        # Dynamic right padding: if legend is outside, compress main frame to make side room
         leg_pos = self.var_legend_pos.get() if hasattr(self, 'var_legend_pos') else "outside right"
-        
         if leg_pos == "outside right":
             base_left, base_right = 0.16, 0.75
         else:
             base_left, base_right = 0.16, 0.92
             
         base_bottom, base_top = 0.18, 0.88
-        
         base_w = base_right - base_left
         base_h = base_top - base_bottom
         
-        # Calculate true geometric center point with tracking offsets
         cx = ((base_left + base_right) / 2) + self.graph_pan_x
         cy = ((base_bottom + base_top) / 2) + self.graph_pan_y
         
@@ -168,7 +151,6 @@ class GraphCreationTab(tk.Frame):
         bottom = cy - h / 2
         top = cy + h / 2
         
-        # Structural guardrails to prevent internal Matplotlib rendering errors
         if left >= right: right = left + 0.01
         if bottom >= top: top = bottom + 0.01
         
@@ -178,39 +160,368 @@ class GraphCreationTab(tk.Frame):
         except Exception:
             pass
 
+    def toggle_input_mode(self):
+        mode = self.data_mode.get()
+        if mode == "manual":
+            self.file_frame.pack_forget()
+            self.manual_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        else:
+            self.manual_frame.pack_forget()
+            self.file_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.generate_plot()
+
+    def upload_data_file(self):
+        file_path = filedialog.askopenfilename(
+            title="Select Data File (CSV or Excel)",
+            filetypes=[("Data Files", "*.csv *.xlsx *.xls"), ("All Files", "*.*")]
+        )
+        if not file_path:
+            return
+        
+        try:
+            if file_path.endswith('.csv'):
+                df = pd.read_csv(file_path)
+            else:
+                xl = pd.ExcelFile(file_path)
+                sheet_name = 'Global Overview' if 'Global Overview' in xl.sheet_names else xl.sheet_names[0]
+                df = xl.parse(sheet_name)
+            
+            if 'File Name' not in df.columns:
+                messagebox.showerror("Format Error", "The selected file does not contain a 'File Name' column.\nPlease import a properly formatted file.")
+                return
+            
+            self.data_df = df
+            self.lbl_file_status.config(text=f"Loaded: {os.path.basename(file_path)}", fg="#2e7d32")
+            self.btn_map.config(state="normal")
+            
+            numeric_cols = list(df.select_dtypes(include=[np.number]).columns)
+            excluded_keys = ['threshold', 'range', 'limit', 'strip', 'parameter']
+            filtered_cols = [col for col in numeric_cols if not any(k in col.lower() for k in excluded_keys)]
+            
+            if not filtered_cols:
+                filtered_cols = numeric_cols if numeric_cols else ["No numeric metrics found"]
+            
+            self.cb_y_metric.config(values=filtered_cols)
+            
+            default_col = None
+            for col in filtered_cols:
+                if "fluorescent" in col.lower() or "area" in col.lower() or "intensity" in col.lower():
+                    default_col = col
+                    break
+            if not default_col and filtered_cols:
+                default_col = filtered_cols[0]
+                
+            self.var_y_metric.set(default_col if default_col else "")
+            
+            # Start with blank mappings
+            self.file_mappings = {}
+            unique_files = list(df['File Name'].dropna().unique())
+            for fn in unique_files:
+                self.file_mappings[fn] = {'category': '', 'subgroup': ''}
+                
+            self.open_mapping_dialog()
+            
+        except Exception as e:
+            messagebox.showerror("Load Error", f"Could not read the selected file:\n{str(e)}")
+
+    def open_mapping_dialog(self):
+        if self.data_df is None:
+            return
+        
+        dialog = tk.Toplevel(self)
+        dialog.title("Configure Experimental Grouping & Mappings")
+        
+        # Set a sensible default size and restrict minimum resizing so it stays readable
+        dialog.geometry("1000x700")
+        dialog.minsize(850, 450)
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # --- 1. Variables (Declared early for closure scoping) ---
+        var_delim = tk.StringVar(value="_")
+        var_cat_idx = tk.IntVar(value=1)
+        var_sub_idx = tk.IntVar(value=2)
+        var_batch_cat = tk.StringVar()
+        var_batch_sub = tk.StringVar()
+        row_widgets = []
+        
+        # --- 2. Logic Callback Functions ---
+        def select_all():
+            for r in row_widgets: 
+                r['var_select'].set(True)
+                
+        def deselect_all():
+            for r in row_widgets: 
+                r['var_select'].set(False)
+
+        def apply_auto_parse():
+            delim = var_delim.get()
+            cat_pos = var_cat_idx.get() - 1
+            sub_pos = var_sub_idx.get() - 1
+            for r in row_widgets:
+                fn_raw = os.path.splitext(r['filename'])[0]
+                parts = fn_raw.split(delim)
+                
+                if 0 <= cat_pos < len(parts):
+                    r['ent_cat'].delete(0, tk.END)
+                    r['ent_cat'].insert(0, parts[cat_pos].strip())
+                if 0 <= sub_pos < len(parts):
+                    r['ent_sub'].delete(0, tk.END)
+                    r['ent_sub'].insert(0, parts[sub_pos].strip())
+                    
+        def apply_batch():
+            b_cat = var_batch_cat.get().strip()
+            b_sub = var_batch_sub.get().strip()
+            for r in row_widgets:
+                if r['var_select'].get():
+                    if b_cat:
+                        r['ent_cat'].delete(0, tk.END)
+                        r['ent_cat'].insert(0, b_cat)
+                    if b_sub:
+                        r['ent_sub'].delete(0, tk.END)
+                        r['ent_sub'].insert(0, b_sub)
+                        
+        def save_and_close():
+            for r in row_widgets:
+                fn = r['filename']
+                cat = r['ent_cat'].get().strip()
+                sub = r['ent_sub'].get().strip()
+                
+                self.file_mappings[fn] = {
+                    'category': cat if cat else "Uncategorized", 
+                    'subgroup': sub if sub else "Ungrouped"
+                }
+            self.generate_plot()
+            dialog.destroy()
+
+        # --- 3. UI Construction ---
+        
+        # 1. TOP FRAME (LabelFrame using stacked sub-rows)
+        top_frame = ttk.LabelFrame(dialog, text="⚡ Smart Helper & Batch Assigner")
+        top_frame.pack(fill=tk.X, side=tk.TOP, padx=10, pady=5)
+        
+        # Row 1 Frame: Auto-Parsing
+        row1_frame = tk.Frame(top_frame)
+        row1_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Label(row1_frame, text="Delimiter:").pack(side=tk.LEFT, padx=2)
+        ent_delim = tk.Entry(row1_frame, textvariable=var_delim, width=4)
+        ent_delim.pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(row1_frame, text="Cat Seg Index:").pack(side=tk.LEFT, padx=2)
+        spn_cat = tk.Spinbox(row1_frame, from_=1, to=10, width=3, textvariable=var_cat_idx)
+        spn_cat.pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(row1_frame, text="Sub Seg Index:").pack(side=tk.LEFT, padx=2)
+        spn_sub = tk.Spinbox(row1_frame, from_=1, to=10, width=3, textvariable=var_sub_idx)
+        spn_sub.pack(side=tk.LEFT, padx=5)
+        
+        btn_parse = tk.Button(row1_frame, text="Auto-Parse Filenames 🧪", bg="#bbdefb", command=apply_auto_parse)
+        btn_parse.pack(side=tk.LEFT, padx=15)
+        
+        # Row 2 Frame: Selection & Batch Customizer
+        row2_frame = tk.Frame(top_frame)
+        row2_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        btn_sel_all = tk.Button(row2_frame, text="Select All", command=select_all)
+        btn_sel_all.pack(side=tk.LEFT, padx=2)
+        btn_desel_all = tk.Button(row2_frame, text="Deselect All", command=deselect_all)
+        btn_desel_all.pack(side=tk.LEFT, padx=2)
+        
+        # Spacer Line to separate actions
+        tk.Label(row2_frame, text=" |  Batch Assign -> ", fg="gray").pack(side=tk.LEFT, padx=8)
+        
+        tk.Label(row2_frame, text="Cat:").pack(side=tk.LEFT, padx=2)
+        ent_b_cat = tk.Entry(row2_frame, textvariable=var_batch_cat, width=12)
+        ent_b_cat.pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(row2_frame, text="Sub:").pack(side=tk.LEFT, padx=2)
+        ent_b_sub = tk.Entry(row2_frame, textvariable=var_batch_sub, width=12)
+        ent_b_sub.pack(side=tk.LEFT, padx=5)
+        
+        btn_apply_batch = tk.Button(row2_frame, text="Apply to Checked ✔", bg="#c8e6c9", command=apply_batch)
+        btn_apply_batch.pack(side=tk.LEFT, padx=10)
+
+        # 2. BOTTOM Frame Packed Second (Locks the save button securely to the bottom)
+        bot_frame = tk.Frame(dialog)
+        bot_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=10)
+            
+        btn_save = tk.Button(bot_frame, text="💾 Save Groupings & Generate Plot", bg="#2e7d32", fg="white",
+                             font=("Arial", 10, "bold"), command=save_and_close)
+        btn_save.pack(pady=5)
+
+        # 3. MIDDLE Frame Packed Last (Dynamically consumes all remaining window space)
+        list_container = tk.Frame(dialog)
+        list_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        canvas = tk.Canvas(list_container, borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_container, orient="vertical", command=canvas.yview)
+        scroll_content = tk.Frame(canvas)
+        
+        scroll_content.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=scroll_content, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        unique_files = list(self.data_df['File Name'].dropna().unique())
+        
+        headers = ["Select", "Image Source Filename", "Category (X-Axis Variable)", "Subgroup (Legend Item)"]
+        for col_idx, text in enumerate(headers):
+            lbl = tk.Label(scroll_content, text=text, font=("Arial", 10, "bold"))
+            lbl.grid(row=0, column=col_idx, padx=10, pady=8, sticky="w")
+            
+        for idx, filename in enumerate(unique_files):
+            r_idx = idx + 1
+            
+            var_sel = tk.BooleanVar(value=False)
+            chk = tk.Checkbutton(scroll_content, variable=var_sel)
+            chk.grid(row=r_idx, column=0, padx=5, pady=2)
+            
+            lbl_file = tk.Label(scroll_content, text=filename, font=("Consolas", 9), anchor="w")
+            lbl_file.grid(row=r_idx, column=1, padx=5, pady=2, sticky="w")
+            
+            curr_cat = self.file_mappings.get(filename, {}).get('category', '')
+            ent_cat = tk.Entry(scroll_content, width=25)
+            ent_cat.insert(0, curr_cat)
+            ent_cat.grid(row=r_idx, column=2, padx=5, pady=2, sticky="w")
+            
+            curr_sub = self.file_mappings.get(filename, {}).get('subgroup', '')
+            ent_sub = tk.Entry(scroll_content, width=25)
+            ent_sub.insert(0, curr_sub)
+            ent_sub.grid(row=r_idx, column=3, padx=5, pady=2, sticky="w")
+            
+            row_widgets.append({
+                'filename': filename,
+                'var_select': var_sel,
+                'ent_cat': ent_cat,
+                'ent_sub': ent_sub
+            })
+
+    def parse_data_matrix(self):
+        mode = self.data_mode.get()
+        if mode == "manual":
+            raw_text = self.txt_data.get("1.0", tk.END).strip().split('\n')
+            parsed_records = []
+            for line in raw_text:
+                line = line.strip()
+                if not line or line.startswith('#'): continue
+                parts = line.split('|')
+                if len(parts) < 3: continue
+                category, subgroup = parts[0].strip(), parts[1].strip()
+                try:
+                    replicates = [float(x.strip()) for x in parts[2].split(',') if x.strip()]
+                    for value in replicates:
+                        parsed_records.append({"Category": category, "Subgroup": subgroup, "Value": value})
+                except ValueError:
+                    continue
+            return pd.DataFrame(parsed_records)
+        else:
+            if self.data_df is None or not self.file_mappings:
+                return pd.DataFrame()
+            
+            metric_col = self.var_y_metric.get()
+            if not metric_col:
+                return pd.DataFrame()
+                
+            parsed_records = []
+            for _, row in self.data_df.iterrows():
+                fn = row.get('File Name')
+                val = row.get(metric_col)
+                if pd.isna(val) or fn is None:
+                    continue
+                
+                mapping = self.file_mappings.get(fn)
+                if mapping:
+                    parsed_records.append({
+                        "Category": mapping['category'],
+                        "Subgroup": mapping['subgroup'],
+                        "Value": float(val)
+                    })
+            return pd.DataFrame(parsed_records)
+
+    def get_color_cycle(self, subgroups_count):
+        mode = self.var_palette.get()
+        if mode == "Prism Bright":
+            palette = ["#1abc9c", "#2ecc71", "#3498db", "#9b59b6", "#f1c40f", "#e67e22"]
+        elif mode == "Seaborn Muted":
+            palette = ["#4878d0", "#ee854a", "#6acc64", "#d65f5f", "#956cb4", "#8c613c"]
+        elif mode == "Classic Grayscale":
+            palette = ["#333333", "#666666", "#999999", "#cccccc", "#eeeeee"]
+        else:
+            palette = [c.strip() for c in self.var_hex_colors.get().split(',') if c.strip()]
+                
+        if not palette: palette = ["#4878d0", "#ee854a", "#6acc64", "#d65f5f", "#956cb4"]
+        return list(itertools.islice(itertools.cycle(palette), subgroups_count))
+
     def _build_control_widgets(self, parent):
-        # --- SECTION 1: DATA TABLE ---
-        frame_data = ttk.LabelFrame(parent, text="Step 1: Raw Replicate Data Table")
+        frame_data = ttk.LabelFrame(parent, text="Step 1: Data Input & Setup")
         frame_data.pack(fill=tk.X, padx=10, pady=5)
         
-        tk.Label(frame_data, text="Format: Category | Subgroup | Replicates (comma-sep)", 
-                 font=("Arial", 8, "italic"), fg="#555").pack(anchor="w", padx=5, pady=(2,5))
+        self.data_mode = tk.StringVar(value="manual")
+        toggle_frame = tk.Frame(frame_data, bg="#f0f0f0")
+        toggle_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        self.txt_data = tk.Text(frame_data, height=8, width=42, font=("Consolas", 9))
-        self.txt_data.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        tk.Radiobutton(toggle_frame, text="✏ Manual Text", variable=self.data_mode, 
+                       value="manual", command=self.toggle_input_mode, bg="#f0f0f0").pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(toggle_frame, text="📊 File Import (CSV/Excel)", variable=self.data_mode, 
+                       value="file", command=self.toggle_input_mode, bg="#f0f0f0").pack(side=tk.LEFT, padx=5)
 
-        # --- SECTION 2: GRAPH LABELS ---
+        self.input_container = tk.Frame(frame_data, bg="#f0f0f0")
+        self.input_container.pack(fill=tk.BOTH, expand=True)
+
+        self.manual_frame = tk.Frame(self.input_container, bg="#f0f0f0")
+        tk.Label(self.manual_frame, text="Format: Category | Subgroup | Replicates (comma-sep)", 
+                 font=("Arial", 8, "italic"), fg="#555", bg="#f0f0f0").pack(anchor="w", padx=5, pady=(2,5))
+        
+        self.txt_data = tk.Text(self.manual_frame, height=8, width=42, font=("Consolas", 9))
+        self.txt_data.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # REMOVED default manual data injection here!
+
+        self.file_frame = tk.Frame(self.input_container, bg="#f0f0f0")
+        btn_upload = tk.Button(self.file_frame, text="📂 Upload Data File (Excel/CSV)", bg="#e65100", fg="white", 
+                               font=("Arial", 9, "bold"), command=self.upload_data_file)
+        btn_upload.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.lbl_file_status = tk.Label(self.file_frame, text="No file loaded", font=("Arial", 8, "italic"), fg="#777", bg="#f0f0f0")
+        self.lbl_file_status.pack(anchor="w", padx=5)
+        
+        tk.Label(self.file_frame, text="Select Metric (Y-axis Value):", bg="#f0f0f0", font=("Arial", 9, "bold")).pack(anchor="w", padx=5, pady=(5, 2))
+        self.var_y_metric = tk.StringVar()
+        self.cb_y_metric = ttk.Combobox(self.file_frame, textvariable=self.var_y_metric, state="readonly")
+        self.cb_y_metric.pack(fill=tk.X, padx=5, pady=2)
+        self.cb_y_metric.bind("<<ComboboxSelected>>", lambda e: self.generate_plot())
+        
+        self.btn_map = tk.Button(self.file_frame, text="🔗 Configure Group Mappings", state="disabled", bg="#0288d1", fg="white", 
+                                 font=("Arial", 9, "bold"), command=self.open_mapping_dialog)
+        self.btn_map.pack(fill=tk.X, padx=5, pady=10)
+
+        self.toggle_input_mode()
+
         frame_labels = ttk.LabelFrame(parent, text="Step 2: Axis & Titles")
         frame_labels.pack(fill=tk.X, padx=10, pady=5)
         
         tk.Label(frame_labels, text="Graph Title:").pack(anchor="w", padx=5)
-        self.var_title = tk.StringVar(value="")
+        self.var_title = tk.StringVar(value="Experimental Results")
         tk.Entry(frame_labels, textvariable=self.var_title).pack(fill=tk.X, padx=5, pady=2)
 
         tk.Label(frame_labels, text="Y-Axis Title:").pack(anchor="w", padx=5)
-        self.var_y_title = tk.StringVar(value="")
+        self.var_y_title = tk.StringVar(value="Measured Value")
         tk.Entry(frame_labels, textvariable=self.var_y_title).pack(fill=tk.X, padx=5, pady=2)
 
         tk.Label(frame_labels, text="X-Axis Title:").pack(anchor="w", padx=5)
-        self.var_x_title = tk.StringVar(value="")
+        self.var_x_title = tk.StringVar(value="Categories")
         tk.Entry(frame_labels, textvariable=self.var_x_title).pack(fill=tk.X, padx=5, pady=2)
 
-        # --- SECTION 3: GRAPH TYPE & STYLE ---
         frame_type = ttk.LabelFrame(parent, text="Step 3: Graph Type & Style")
         frame_type.pack(fill=tk.X, padx=10, pady=5)
 
         tk.Label(frame_type, text="Chart Mode:").pack(anchor="w", padx=5)
-        self.var_chart_mode = tk.StringVar(value="Grouped Bar (Mean + Error Only)")
+        self.var_chart_mode = tk.StringVar(value="Grouped Bar + Scatter (Prism)")
         ttk.Combobox(frame_type, textvariable=self.var_chart_mode, state="readonly",
                      values=["Grouped Bar + Scatter (Prism)", "Grouped Bar (Mean + Error Only)", 
                              "Box Plot (Grouped)", "Violin Plot (Grouped)"]).pack(fill=tk.X, padx=5, pady=2)
@@ -224,7 +535,6 @@ class GraphCreationTab(tk.Frame):
         self.var_jitter = tk.DoubleVar(value=0.02)
         tk.Scale(frame_type, from_=0.0, to=0.1, resolution=0.01, orient=tk.HORIZONTAL, variable=self.var_jitter).pack(fill=tk.X, padx=5, pady=2)
 
-        # --- SECTION 4: COLOR CONFIGURATOR ---
         frame_colors = ttk.LabelFrame(parent, text="Step 4: Bar Colors & Textures")
         frame_colors.pack(fill=tk.X, padx=10, pady=5)
 
@@ -241,7 +551,6 @@ class GraphCreationTab(tk.Frame):
         self.var_hatches = tk.StringVar(value="")
         tk.Entry(frame_colors, textvariable=self.var_hatches).pack(fill=tk.X, padx=5, pady=2)
 
-        # --- SECTION 5: GEOMETRY & SPACING ---
         frame_geom = ttk.LabelFrame(parent, text="Step 5: Dimensional Settings")
         frame_geom.pack(fill=tk.X, padx=10, pady=5)
 
@@ -257,7 +566,6 @@ class GraphCreationTab(tk.Frame):
         self.var_y_limits = tk.StringVar(value="")
         tk.Entry(frame_geom, textvariable=self.var_y_limits).pack(fill=tk.X, padx=5, pady=2)
 
-        # --- SECTION 6: FONTS & LEGEND ---
         frame_fonts = ttk.LabelFrame(parent, text="Step 6: Typography & Layout")
         frame_fonts.pack(fill=tk.X, padx=10, pady=5)
 
@@ -266,7 +574,7 @@ class GraphCreationTab(tk.Frame):
         ttk.Combobox(frame_fonts, textvariable=self.var_font, values=["Arial", "Times New Roman", "Helvetica", "Courier New"]).pack(fill=tk.X, padx=5, pady=2)
 
         tk.Label(frame_fonts, text="Font Sizes (Title, Axis, Ticks):").pack(anchor="w", padx=5)
-        self.var_font_sizes = tk.StringVar(value="")
+        self.var_font_sizes = tk.StringVar(value="14,12,10")
         tk.Entry(frame_fonts, textvariable=self.var_font_sizes).pack(fill=tk.X, padx=5, pady=2)
 
         tk.Label(frame_fonts, text="Legend Position:").pack(anchor="w", padx=5)
@@ -274,12 +582,11 @@ class GraphCreationTab(tk.Frame):
         ttk.Combobox(frame_fonts, textvariable=self.var_legend_pos, state="readonly",
                      values=["outside right", "upper right", "upper left", "lower right", "lower left", "best", "None"]).pack(fill=tk.X, padx=5, pady=2)
 
-        # --- SECTION 7: AUTOMATED STATISTICS ---
         frame_sig = ttk.LabelFrame(parent, text="Step 7: Automated Statistics")
         frame_sig.pack(fill=tk.X, padx=10, pady=5)
 
         tk.Label(frame_sig, text="Significance Testing (α = 0.05):").pack(anchor="w", padx=5)
-        self.var_stats_mode = tk.StringVar(value="None")
+        self.var_stats_mode = tk.StringVar(value="T-Test (Compare to 1st Subgroup)")
         ttk.Combobox(frame_sig, textvariable=self.var_stats_mode, state="readonly",
                      values=[
                          "None", 
@@ -294,7 +601,6 @@ class GraphCreationTab(tk.Frame):
                                   font=("Arial", 8, "italic"), fg="#555", justify=tk.LEFT)
         lbl_stats_info.pack(anchor="w", padx=5, pady=5)
 
-        # --- ACTIONS ---
         btn_generate = tk.Button(parent, text="📊 Generate / Refresh Preview", bg="#0066cc", fg="white", 
                                  font=("Arial", 10, "bold"), command=self.generate_plot)
         btn_generate.pack(fill=tk.X, padx=10, pady=10)
@@ -303,47 +609,16 @@ class GraphCreationTab(tk.Frame):
                                font=("Arial", 10, "bold"), command=self.export_plot)
         btn_export.pack(fill=tk.X, padx=10, pady=2)
 
-    def _on_canvas_configure(self, event):
-        self.canvas_left.itemconfig(self.canvas_window, width=event.width)
-
-    def parse_data_matrix(self):
-        raw_text = self.txt_data.get("1.0", tk.END).strip().split('\n')
-        parsed_records = []
-        for line in raw_text:
-            line = line.strip()
-            if not line or line.startswith('#'): continue
-            parts = line.split('|')
-            if len(parts) < 3: continue
-            category, subgroup = parts[0].strip(), parts[1].strip()
-            try:
-                replicates = [float(x.strip()) for x in parts[2].split(',') if x.strip()]
-                for value in replicates:
-                    parsed_records.append({"Category": category, "Subgroup": subgroup, "Value": value})
-            except ValueError:
-                continue
-        return pd.DataFrame(parsed_records)
-
-    def get_color_cycle(self, subgroups_count):
-        mode = self.var_palette.get()
-        if mode == "Prism Bright":
-            palette = ["#1abc9c", "#2ecc71", "#3498db", "#9b59b6", "#f1c40f", "#e67e22"]
-        elif mode == "Seaborn Muted":
-            palette = ["#4878d0", "#ee854a", "#6acc64", "#d65f5f", "#956cb4", "#8c613c"]
-        elif mode == "Classic Grayscale":
-            palette = ["#333333", "#666666", "#999999", "#cccccc", "#eeeeee"]
-        else:
-            palette = [c.strip() for c in self.var_hex_colors.get().split(',') if c.strip()]
-                
-        if not palette: palette = ["#4A90E2", "#F39C12", "#2ecc71", "#e74c3c", "#9b59b6"]
-        return list(itertools.islice(itertools.cycle(palette), subgroups_count))
-
     def generate_plot(self):
+        if not hasattr(self, 'ax'):
+            return
+            
         self.ax.clear()
         
         df = self.parse_data_matrix()
         if df.empty:
             self.ax.axis('off')
-            self.ax.text(0.5, 0.5, "Data table is empty.\nEnter data to generate plot.", 
+            self.ax.text(0.5, 0.5, "Data table is empty.\nEnter data or load a file to generate plot.", 
                          ha='center', va='center', color='gray', fontsize=12)
             self.mpl_canvas.draw()
             return
@@ -439,7 +714,6 @@ class GraphCreationTab(tk.Frame):
                     vp = self.ax.violinplot(violin_data, positions=x_pos, widths=bar_width * 1.5, showmeans=True)
                     for pc in vp['bodies']: pc.set_facecolor(colors[i])
 
-        # --- AUTOMATED STATISTICAL SIGNIFICANCE ---
         stats_mode = self.var_stats_mode.get()
         dynamic_bracket_y = highest_data_point * 1.05
         bracket_increment = highest_data_point * 0.10
@@ -500,7 +774,6 @@ class GraphCreationTab(tk.Frame):
                         except Exception:
                             pass
 
-        # --- FORMATTING ---
         self.ax.set_xticks(r)
         self.ax.set_xticklabels(categories, fontsize=tick_sz)
         self.ax.tick_params(axis='y', labelsize=tick_sz)
@@ -524,7 +797,6 @@ class GraphCreationTab(tk.Frame):
                     self.ax.set_ylim(float(lim_raw[0]), float(lim_raw[1]))
             except Exception: pass
         else:
-            # Boost the top headroom slightly to safeguard stacked brackets from hitting titles
             ymax = max(highest_data_point * 1.20, dynamic_bracket_y + (highest_data_point * 0.08))
             if ymax <= 0 or np.isnan(ymax): ymax = 1 
             self.ax.set_ylim(bottom=0, top=ymax)
@@ -539,7 +811,6 @@ class GraphCreationTab(tk.Frame):
                 else:
                     self.ax.legend(handles[:n_subs], labels[:n_subs], loc=leg_pos, frameon=True, fontsize=tick_sz)
 
-        # Force structural layout recalculation
         self.apply_layout_transform()
 
     def export_plot(self):
