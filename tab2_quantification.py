@@ -737,8 +737,26 @@ class QuantificationTab(ttk.Frame):
                 v_min = state.get('int_min', 0)
                 v_max = state.get('int_max', 255)
                 
-                lower_bound = np.array([h_min, 30, v_min]) 
-                upper_bound = np.array([h_max, 255, v_max])
+                # ---> NEW: ADAPTIVE GRAYSCALE DETECTOR <---
+                is_grayscale = False
+                if len(self.original_image_rgb.shape) == 2:
+                    is_grayscale = True
+                elif len(self.original_image_rgb.shape) == 3:
+                    # Check if all 3 color planes match identically (Grayscale read as RGB)
+                    if np.array_equal(self.original_image_rgb[:, :, 0], self.original_image_rgb[:, :, 1]) and \
+                       np.array_equal(self.original_image_rgb[:, :, 1], self.original_image_rgb[:, :, 2]):
+                        is_grayscale = True
+                
+                if is_grayscale:
+                    # Grayscale has no native chroma. Open the H/S gates wide open
+                    # and rely strictly on the Intensity (Value) limits.
+                    lower_bound = np.array([0, 0, v_min])
+                    upper_bound = np.array([179, 255, v_max])
+                else:
+                    # Standard color-channel settings for true RGB images
+                    lower_bound = np.array([h_min, 30, v_min]) 
+                    upper_bound = np.array([h_max, 255, v_max])
+                # ------------------------------------------
                 
                 mask_filtered = cv2.inRange(self.cached_hsv, lower_bound, upper_bound)
                 
