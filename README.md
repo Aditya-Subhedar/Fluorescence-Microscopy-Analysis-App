@@ -49,6 +49,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 
 ### 📍 Tab 6: Automated Statistical Visualization & Graph Generation
 * **Flexible Plot Formats:** Ingests raw replicate data matrices to generate aggregated Grouped Bar charts, Box plots, or Violin plots calculating central tendencies mapped against user-selected Standard Deviation (SD) or Standard Error of the Mean (SEM) dispersion metrics.
+* **Auto Parsing of CytoQuant CSV & Excel Quantification Files (from Tab 2):** Supports direct uploading of CSV & Excel files and automated column/field parsing such as Fluoroscent area, cell count, mean intensity. Upload file directly and select groups and subgroups for the data in the file. Only supports files generated in CytoQuant format in CSV and Excel.
 * **Replicate Dispersion Jitter:** Transparently overlays raw data points over bar charts using an adjustable, randomized Gaussian spatial jitter to prevent structural occlusion within high-density replicate clusters.
 * **Inferential Statistical Backend:** Computes automated parametric or non-parametric pairwise comparisons (Independent t-tests, Mann-Whitney U tests) and global variance profiles (One-Way ANOVA) directly within the interface against an alpha threshold (a = 0.05).
 * **Dynamic Significance Routing:** Automatically parses the maximum local data heights (y_max) to programmatically route adaptive, stacked significance brackets accented with standard academic nomenclature (*, **, ***) while applying built-in collision prevention.
