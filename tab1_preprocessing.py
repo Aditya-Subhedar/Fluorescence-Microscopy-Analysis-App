@@ -1398,53 +1398,134 @@ class PreProcessingTab(ttk.Frame):
 
             else:
                 import tifffile
+                import io
                 import numpy as np
+                import xml.etree.ElementTree as ET
                 
-                # Load the raw TIFF array, ignoring multi-file OME linking if siblings are missing
-                img_raw = tifffile.imread(file_path, is_ome=False)
-                
+                with tifffile.TiffFile(file_path, is_ome=False) as tif:
+                    img_raw = tif.asarray()
+                    
+                    # --- 1. Extract MetaData (OME-XML or Standard Tags) ---
+                    microns_x = None
+                    microns_y = None
+                    channel_list = []
+                    
+                    # Target A: OME-XML Metadata (Standard for Microscopy Tiffs)
+                    if tif.is_ome and tif.ome_metadata:
+                        try:
+                            # Strip namespaces for easier loose matching
+                            it = ET.iterparse(io.StringIO(tif.ome_metadata))
+                            for _, el in it:
+                                _, _, el.tag = el.tag.rpartition('}')
+                            root = it.root
+                            
+                            # Extract Physical Scale
+                            for pixels in root.iter('Pixels'):
+                                phys_x = pixels.get('PhysicalSizeX')
+                                phys_y = pixels.get('PhysicalSizeY')
+                                if phys_x and microns_x is None:
+                                    microns_x = float(phys_x)
+                                if phys_y and microns_y is None:
+                                    microns_y = float(phys_y)
+                                    
+                            # Extract Channels and Colors
+                            for channel in root.iter('Channel'):
+                                c_name = channel.get('Name')
+                                c_color = channel.get('Color')  # Usually signed 32-bit int in OME
+                                hex_color = "Unknown"
+                                
+                                if c_color:
+                                    try:
+                                        val = int(c_color)
+                                        if val < 0: val = (1 << 32) + val
+                                        # Decode ARGB/RGBA to RGB hex
+                                        hex_color = f"#{val & 0xFFFFFF:06X}"
+                                    except ValueError:
+                                        pass
+                                        
+                                if not c_name:
+                                    c_name = channel.get('ID', f"Channel {len(channel_list) + 1}")
+                                    
+                                channel_list.append({"name": c_name, "hex": hex_color})
+                                
+                        except Exception as meta_err:
+                            print(f"Warning: OME-XML metadata parsing failed: {meta_err}")
+
+                    # Target B: Standard TIFF Tags Fallback (If no OME metadata exists)
+                    if microns_x is None and len(tif.pages) > 0:
+                        tags = tif.pages[0].tags
+                        if 'XResolution' in tags and 'YResolution' in tags:
+                            try:
+                                x_res_val = tags['XResolution'].value
+                                y_res_val = tags['YResolution'].value
+                                res_unit = tags.get('ResolutionUnit')
+                                unit_val = res_unit.value if res_unit else 2 # Default to Inch
+                                
+                                # Tag values are typically represented as rational tuples (Numerator, Denominator)
+                                x_res = x_res_val[0] / x_res_val[1] if isinstance(x_res_val, tuple) else float(x_res_val)
+                                y_res = y_res_val[0] / y_res_val[1] if isinstance(y_res_val, tuple) else float(y_res_val)
+                                
+                                if x_res > 0 and y_res > 0:
+                                    if unit_val == 3: # Centimeter
+                                        microns_x = 10000.0 / x_res
+                                        microns_y = 10000.0 / y_res
+                                    elif unit_val == 2: # Inch
+                                        microns_x = 25400.0 / x_res
+                                        microns_y = 25400.0 / y_res
+                            except Exception:
+                                pass
+
+                    # Bind the extracted data to the application variables
+                    if microns_x is not None:
+                        self.microns_per_pixel_x = round(microns_x, 5)
+                        self.microns_per_pixel_y = round(microns_y if microns_y is not None else microns_x, 5)
+                        
+                    if channel_list:
+                        self._temp_extracted_channels = channel_list
+
+                # --- 2. Type Checking & Scaling ---
                 # Ensure float32 or uint16 type checking as per your pipeline
                 if img_raw.dtype == np.uint8:
                     img_raw = img_raw.astype(np.uint16) * 257  # scale to 16-bit range roughly if needed, or keep raw
                 
-                # --- ROBUST 4D RESHAPING FOR TIFFs ---
+                # --- 3. ROBUST 4D RESHAPING FOR TIFFs ---
                 ndim = img_raw.ndim
                 shape = img_raw.shape
                 
                 if ndim == 2:
                     # Case 1: Single 2D plane grayscale -> shape (Y, X)
-                    # Convert to (1, Y, X, 1) -> 1 Z-slice, 1 Channel
                     img = img_raw[np.newaxis, :, :, np.newaxis]
                     
                 elif ndim == 3:
-                    # Case 2: Could be standard RGB (Y, X, 3) or a Grayscale Z-stack (Z, Y, X)
-                    # Look at the last dimension to guess if it's channels
+                    # Case 2: Standard RGB (Y, X, 3) or Grayscale Z-stack (Z, Y, X)
                     if shape[2] in [3, 4]:  # Standard RGB or RGBA plane
-                        # Convert (Y, X, C) -> (1, Y, X, C)
                         img = img_raw[np.newaxis, :, :, :]
                     else:
-                        # Convert Grayscale Z-stack (Z, Y, X) -> (Z, Y, X, 1)
                         img = img_raw[:, :, :, np.newaxis]
                         
                 elif ndim == 4:
-                    # Case 3: Already multi-channel Z-stack or time series -> shape (Z, Y, X, C) or (C, Z, Y, X)
-                    # Standard microscopy outputs usually order multi-page tiffs as (Z, Y, X, C) or (Z, C, Y, X)
-                    # If the last dimension is very large (like height/width), channels might be at axis 1 or 0.
-                    if shape[3] > 20 and shape[1] <= 10:  # Appears to be (Z, C, Y, X)
+                    # Case 3: Already multi-channel Z-stack -> (Z, Y, X, C) or (C, Z, Y, X)
+                    if shape[3] > 20 and shape[1] <= 10:
                         img = np.transpose(img_raw, (0, 2, 3, 1))
-                    elif shape[0] <= 10 and shape[3] > 20: # Appears to be (C, Z, Y, X)
+                    elif shape[0] <= 10 and shape[3] > 20:
                         img = np.transpose(img_raw, (1, 2, 3, 0))
                     else:
                         img = img_raw
                         
                 else:
-                    # Fallback for weirdly ordered high-dimensional hyperstacks
                     img = img_raw
                     while img.ndim < 4:
                         img = img[:, :, :, np.newaxis]
                     if img.ndim > 4:
-                        img = img[0, :, :, :, 0] # Squash extra dimensions safely
-                
+                        img = img[0, :, :, :, 0]
+
+                # --- 4. CHANNEL SWAP CORRECTION (RGB <-> BGR) ---
+                # If the image has 3 or 4 channels, swap the 1st (Red) and 3rd (Blue) channels
+                if img.shape[3] == 3:
+                    img = img[..., [2, 1, 0]]      # Swap Red (0) and Blue (2)
+                elif img.shape[3] == 4:
+                    img = img[..., [2, 1, 0, 3]]   # Swap Red & Blue, keep Alpha (3) intact
+
                 self.original_num_channels = img.shape[3]
 
             # =========================================================
