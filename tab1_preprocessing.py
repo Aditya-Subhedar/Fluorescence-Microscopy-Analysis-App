@@ -1934,66 +1934,116 @@ class PreProcessingTab(ttk.Frame):
     # --- Saving ---
     def save_image_to_disk(self):
         if self.raw_volume is None: return
+        
         file_path = filedialog.asksaveasfilename(
             defaultextension=".tif",
-            filetypes=[("TIFF File", "*.tif *.tiff"), ("PNG File", "*.png"), ("JPEG File", "*.jpg *.jpeg")],
+            filetypes=[
+                ("TIFF File", "*.tif *.tiff"), 
+                ("OME-TIFF Stack", "*.ome.tif"), # Added OME-TIFF option
+                ("PNG File", "*.png"), 
+                ("JPEG File", "*.jpg *.jpeg")
+            ],
             title="Save Processed Image As..."
         )
+        
         if not file_path: return
+        
         try:
-            if self.is_merged_preview:
-                z_start = max(0, min(int(self.spin_z_start.get()), self.max_z))
-                z_end = max(0, min(int(self.spin_z_end.get()), self.max_z))
-                if z_start > z_end: z_start, z_end = z_end, z_start
-                stack_slice = self.raw_volume[z_start:z_end+1]
-                target_data = np.max(stack_slice, axis=0) 
-                export_z = int((z_start + z_end) // 2)
-            else:
-                export_z = self.scale_z.get()
-                target_data = self.raw_volume[export_z]
+            is_ome_tif = file_path.lower().endswith('.ome.tif')
+            is_standard_tif = file_path.lower().endswith(('.tif', '.tiff'))
             
-            final_rgb = self.apply_image_math(target_data, current_z=export_z)
-            final_rgb = self.stamp_scale_bar_for_export(final_rgb)
-            
-            # Ensure data layout is continuous in memory for optimal writing performance
-            final_rgb = np.ascontiguousarray(final_rgb)
-            
-            if file_path.lower().endswith(('.tif', '.tiff')):
-                try:
-                    pixel_size_um = float(self.entry_pixel_size.get())
-                except (ValueError, AttributeError):
-                    pixel_size_um = 0 
+            # 1. Ask the user if they want to save the full stack (if applicable)
+            save_as_stack = False
+            if (is_ome_tif or is_standard_tif) and len(self.raw_volume) > 1:
+                from tkinter import messagebox
+                save_as_stack = messagebox.askyesno(
+                    "Save Full Stack?", 
+                    "Do you want to save the entire Z-stack?\n\nSelect 'Yes' for the full multi-dimensional stack, or 'No' for the current 2D view."
+                )
+
+            # 2. Extract resolution metadata safely
+            try:
+                pixel_size_um = float(self.entry_pixel_size.get())
+            except (ValueError, AttributeError):
+                pixel_size_um = 0 
                 
-                if pixel_size_um > 0:
-                    # Convert to a clean rational tuple to prevent metadata truncation bugs
-                    # 1 cm = 10,000 um. We store resolution as pixels per 10,000 units.
-                    resolution_val = 10000.0 / pixel_size_um
+            res_fraction = None
+            if pixel_size_um > 0:
+                resolution_val = 10000.0 / pixel_size_um
+                res_fraction = float(resolution_val).as_integer_ratio()
+
+            # ---------------------------------------------------------
+            # PATH A: MULTI-DIMENSIONAL STACK EXPORT
+            # ---------------------------------------------------------
+            if save_as_stack:
+                stack_frames = []
+                # Loop through the volume, apply math, and render each slice
+                for z in range(len(self.raw_volume)):
+                    z_frame = self.apply_image_math(self.raw_volume[z], current_z=z)
+                    z_frame = self.stamp_scale_bar_for_export(z_frame)
+                    stack_frames.append(z_frame)
+                
+                # Convert list of frames into a contiguous 3D/4D numpy array
+                final_stack = np.array(stack_frames)
+                final_stack = np.ascontiguousarray(final_stack)
+                
+                # Setup writing arguments
+                write_kwargs = {"compression": "zlib"}
+                
+                if res_fraction:
+                    write_kwargs.update({
+                        "resolution": res_fraction,
+                        "resolutionunit": 3,
+                        "metadata": {'unit': 'um', 'axes': 'ZYXC'}
+                    })
                     
-                    # Convert to rational fraction (numerator, denominator) for the TIFF standard
-                    res_fraction = float(resolution_val).as_integer_ratio()
+                if is_ome_tif:
+                    write_kwargs["ome"] = True # Enforce strict OME-XML structure
                     
-                    tifffile.imwrite(
-                        file_path, 
-                        final_rgb,
-                        resolution=res_fraction,
-                        resolutionunit=3,  # 3 = CENTIMETER
-                        metadata={'unit': 'um'},  # Standard for ImageJ/Fiji compatibility
-                        compression='zlib'  # Enforce lossless compression to preserve sharpness
-                    )
+                tifffile.imwrite(file_path, final_stack, **write_kwargs)
+
+            # ---------------------------------------------------------
+            # PATH B: 2D SINGLE SLICE OR MIP EXPORT
+            # ---------------------------------------------------------
+            else:
+                if self.is_merged_preview:
+                    z_start = max(0, min(int(self.spin_z_start.get()), self.max_z))
+                    z_end = max(0, min(int(self.spin_z_end.get()), self.max_z))
+                    if z_start > z_end: z_start, z_end = z_end, z_start
+                    stack_slice = self.raw_volume[z_start:z_end+1]
+                    target_data = np.max(stack_slice, axis=0) 
+                    export_z = int((z_start + z_end) // 2)
                 else:
-                    tifffile.imwrite(file_path, final_rgb, compression='zlib')
+                    export_z = self.scale_z.get()
+                    target_data = self.raw_volume[export_z]
+                
+                final_rgb = self.apply_image_math(target_data, current_z=export_z)
+                final_rgb = self.stamp_scale_bar_for_export(final_rgb)
+                final_rgb = np.ascontiguousarray(final_rgb)
+                
+                if is_ome_tif or is_standard_tif:
+                    write_kwargs = {"compression": "zlib"}
+                    if res_fraction:
+                        write_kwargs.update({
+                            "resolution": res_fraction,
+                            "resolutionunit": 3,
+                            "metadata": {'unit': 'um'}
+                        })
+                    if is_ome_tif:
+                        write_kwargs["ome"] = True
+                        
+                    tifffile.imwrite(file_path, final_rgb, **write_kwargs)
                     
-            elif file_path.lower().endswith('.png'):
-                final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
-                # Enforce maximum, lossless PNG compression to maintain high-res detail
-                cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
-                
-            else:
-                final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
-                # If saving as JPEG, maximize quality to 100% to minimize artifacts
-                cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
-                
+                elif file_path.lower().endswith('.png'):
+                    final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
+                    cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
+                    
+                else:
+                    final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
+                    cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+                    
         except Exception as e:
             import traceback
             traceback.print_exc()
+            from tkinter import messagebox
             messagebox.showerror("Save Error", f"Failed to save image:\n{e}")
