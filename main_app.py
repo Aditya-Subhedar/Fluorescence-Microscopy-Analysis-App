@@ -23,7 +23,6 @@ from tab2_quantification import QuantificationTab
 from tab3_representation import MaskMergerTab
 from tab4_panel_creation import PanelCreationTab 
 from tab5_golgi_cox_analysis import GolgiTab
-# Swapped to your new Graph Creation Tab
 from tab6_graph_creation import GraphCreationTab
 
 class CytoQuantApp:
