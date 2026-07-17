@@ -703,15 +703,25 @@ class GraphCreationTab(tk.Frame):
                             self.ax.scatter(jittered_x, pts, marker=marker_cycle[i], s=35, 
                                             facecolors='#333333' if colors[i].lower() != "#ffffff" else 'none', 
                                             edgecolors='black', zorder=5, alpha=0.9)
+            
+            # --- FIX APPLIED HERE ---
             elif "Box Plot" in chart_mode:
-                box_data = [list(pts) for pts in raw_pts if len(pts) > 0]
-                if box_data:
-                    bp = self.ax.boxplot(box_data, positions=x_pos, widths=bar_width, patch_artist=True, manage_ticks=False)
+                # Zip raw points and their specific X positions together, then filter out empty ones
+                valid_pairs = [(list(pts), x) for pts, x in zip(raw_pts, x_pos) if len(pts) > 0]
+                if valid_pairs:
+                    box_data = [p[0] for p in valid_pairs]
+                    valid_x_pos = [p[1] for p in valid_pairs]
+                    bp = self.ax.boxplot(box_data, positions=valid_x_pos, widths=bar_width, patch_artist=True, manage_ticks=False)
                     for patch in bp['boxes']: patch.set_facecolor(colors[i])
+            
+            # --- FIX APPLIED HERE ---
             elif "Violin Plot" in chart_mode:
-                violin_data = [pts for pts in raw_pts if len(pts) > 0]
-                if violin_data:
-                    vp = self.ax.violinplot(violin_data, positions=x_pos, widths=bar_width * 1.5, showmeans=True)
+                # Zip raw points and their specific X positions together, then filter out empty ones
+                valid_pairs = [(pts, x) for pts, x in zip(raw_pts, x_pos) if len(pts) > 0]
+                if valid_pairs:
+                    violin_data = [p[0] for p in valid_pairs]
+                    valid_x_pos = [p[1] for p in valid_pairs]
+                    vp = self.ax.violinplot(violin_data, positions=valid_x_pos, widths=bar_width * 1.5, showmeans=True)
                     for pc in vp['bodies']: pc.set_facecolor(colors[i])
 
         stats_mode = self.var_stats_mode.get()
