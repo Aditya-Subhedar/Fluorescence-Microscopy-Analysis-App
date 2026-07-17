@@ -277,6 +277,77 @@ class QuantificationTab(ttk.Frame):
         self.load_current_image_data()
         self.update_nav_button_states()
 
+    def load_current_image_data(self):
+        """Loads the current selected image into the UI using high-speed look-ahead memory extraction."""
+        if self.current_index >= len(self.image_files) or not self.image_states: return
+        
+        state = self.image_states[self.current_index]
+        file_path = state['file_path']
+        
+        try:
+            # --- THE FIX: Pull from fast look-ahead RAM cache instead of slow disk operations ---
+            self.original_image_rgb = self.get_image_from_cache(file_path)
+            
+            if self.original_image_rgb is None: return
+
+            self.zoom_factor = 1.0
+            self.pan_x = 0
+            self.pan_y = 0
+            
+            # Grab metadata
+            self.pixel_size_um = self.get_pixel_size_um(file_path)
+
+            if state.get('manual_mask_add') is None:
+                state['manual_mask_add'] = np.zeros(self.original_image_rgb.shape[:2], dtype=np.uint8)
+            if state.get('manual_mask_remove') is None:
+                state['manual_mask_remove'] = np.zeros(self.original_image_rgb.shape[:2], dtype=np.uint8)
+                
+            self.current_manual_add = state['manual_mask_add']
+            self.current_manual_remove = state['manual_mask_remove']
+            
+            img_blur = cv2.GaussianBlur(self.original_image_rgb, (3, 3), 0)
+            self.cached_hsv = cv2.cvtColor(img_blur, cv2.COLOR_RGB2HSV)
+            self.cached_gray = cv2.cvtColor(img_blur, cv2.COLOR_RGB2GRAY)
+            
+            self.auto_detect_enabled = False
+            self.btn_auto.config(text="Auto Detect: OFF", fg="red")
+            
+            self._ignore_sliders = True 
+            
+            # INTENSITY DUAL SLIDER
+            if state.get('int_min') is None or state.get('int_min') == 0:
+                otsu_val = filters.threshold_otsu(self.cached_gray)
+                state['int_min'] = int(otsu_val)
+                state['int_max'] = 255 
+                
+            self.int_slider.set_values(state.get('int_min', 0), state.get('int_max', 255))
+
+            # HUE SLIDER
+            self.hue_slider.set_values(state.get('hue_min', 0), state.get('hue_max', 179))
+            
+            # AREA DUAL SLIDER
+            if 'area_min_pos' not in state: state['area_min_pos'] = 30
+            if 'area_max_pos' not in state: state['area_max_pos'] = 1000
+            
+            self.area_slider.set_values(state['area_min_pos'], state['area_max_pos'])
+
+            # CIRCULARITY SLIDER
+            if 'circ_min' not in state: state['circ_min'] = 0
+            if 'circ_max' not in state: state['circ_max'] = 100
+            
+            self.circ_slider.set_values(state.get('circ_min', 0))
+
+            self._ignore_sliders = False 
+
+            self.process_image()
+            
+            # --- NEW: Automatically start fetching adjacent images in the background ---
+            self.manage_cache_pipeline()
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
     def get_image_from_cache(self, path):
         """Fetches an image from memory if cached; otherwise loads it synchronously."""
         with self.cache_lock:
@@ -392,122 +463,57 @@ class QuantificationTab(ttk.Frame):
             return None
         
     def get_pixel_size_um(self, file_path):
-        """Extracts the physical pixel size from the 2D TIFF exported by Tab 1."""
+        """Extracts the physical pixel size using robust tifffile parsing."""
         try:
-            from PIL import Image
-            with Image.open(file_path) as img:
-                # 1. Try reading the high-fidelity standard TIFF metadata tags
-                if hasattr(img, 'tag_v2'):
-                    x_res = img.tag_v2.get(282)  # Tag 282 = XResolution
-                    unit = img.tag_v2.get(296)   # Tag 296 = ResolutionUnit
-                    
-                    if x_res and unit:
-                        # Extract the primitive values regardless of if it is an IFDRational object or a tuple
-                        if hasattr(x_res, 'numerator') and hasattr(x_res, 'denominator'):
-                            num, den = x_res.numerator, x_res.denominator
-                        elif isinstance(x_res, (tuple, list)):
-                            num, den = x_res[0], x_res[1] if len(x_res) > 1 else 1
-                        else:
-                            num, den = float(x_res), 1
-
-                        if num > 0 and den > 0:
-                            pixels_per_unit = num / den
-                            # Unit 3 = Centimeters (1 cm = 10,000 um)
-                            if unit == 3: 
-                                return 10000.0 / pixels_per_unit
-                            # Unit 2 = Inches (1 inch = 25,400 um)
-                            elif unit == 2: 
-                                return 25400.0 / pixels_per_unit
-                
-                # 2. Backup Fallback: Try reading ImageJ or OME-TIFF metadata strings inside ImageDescription
-                if 'ImageDescription' in img.info:
-                    desc = str(img.info['ImageDescription'])
-                    import re
-                    
-                    match_ome = re.search(r'PhysicalSizeX="([0-9.]+)"', desc)
+            import tifffile
+            import re
+            
+            with tifffile.TiffFile(file_path) as tif:
+                # 1. PRIMARY: OME-TIFF explicit metadata
+                if tif.is_ome:
+                    ome_xml = str(tif.ome_metadata)
+                    match_ome = re.search(r'PhysicalSizeX="([0-9.]+)"', ome_xml)
                     if match_ome:
                         return float(match_ome.group(1))
                         
-                    if 'unit=micron' in desc or 'unit=um' in desc:
+                # 2. SECONDARY: ImageJ explicit metadata
+                if tif.is_imagej and tif.imagej_metadata:
+                    desc = str(tif.imagej_metadata)
+                    if 'micron' in desc or 'um' in desc:
                         match_ij = re.search(r'spacing=([0-9.]+)', desc)
-                        if match_ij: 
+                        if match_ij:
                             return float(match_ij.group(1))
+                            
+                # 3. FALLBACK: Standard TIFF resolution tags
+                page = tif.pages[0]
+                if 'XResolution' in page.tags and 'ResolutionUnit' in page.tags:
+                    x_res = page.tags['XResolution'].value
+                    unit = page.tags['ResolutionUnit'].value
+                    
+                    if isinstance(x_res, tuple) and len(x_res) == 2:
+                        num, den = x_res[0], x_res[1]
+                        if num > 0 and den > 0:
+                            pixels_per_unit = num / den
+                            if unit == 3: # Centimeters
+                                return 10000.0 / pixels_per_unit
+                            elif unit == 2: # Inches
+                                return 25400.0 / pixels_per_unit
 
         except Exception as e:
-            print(f"Metadata extraction fell back: {e}")
-            
-        return None
+            print(f"Tifffile extraction fell back: {e}")
 
-    def load_current_image_data(self):
-        """Loads the current selected image into the UI using high-speed look-ahead memory extraction."""
-        if self.current_index >= len(self.image_files) or not self.image_states: return
-        
-        state = self.image_states[self.current_index]
-        file_path = state['file_path']
-        
+        # 4. FINAL FALLBACK: PIL for standard formats (PNG/JPG)
         try:
-            # --- THE FIX: Pull from fast look-ahead RAM cache instead of slow disk operations ---
-            self.original_image_rgb = self.get_image_from_cache(file_path)
-            
-            if self.original_image_rgb is None: return
+            from PIL import Image
+            with Image.open(file_path) as img:
+                if 'dpi' in img.info:
+                    dpi_x = img.info['dpi'][0]
+                    if dpi_x > 0:
+                        return 25400.0 / dpi_x
+        except Exception:
+            pass
 
-            self.zoom_factor = 1.0
-            self.pan_x = 0
-            self.pan_y = 0
-            
-            # Grab metadata
-            self.pixel_size_um = self.get_pixel_size_um(file_path)
-
-            if state.get('manual_mask_add') is None:
-                state['manual_mask_add'] = np.zeros(self.original_image_rgb.shape[:2], dtype=np.uint8)
-            if state.get('manual_mask_remove') is None:
-                state['manual_mask_remove'] = np.zeros(self.original_image_rgb.shape[:2], dtype=np.uint8)
-                
-            self.current_manual_add = state['manual_mask_add']
-            self.current_manual_remove = state['manual_mask_remove']
-            
-            img_blur = cv2.GaussianBlur(self.original_image_rgb, (3, 3), 0)
-            self.cached_hsv = cv2.cvtColor(img_blur, cv2.COLOR_RGB2HSV)
-            self.cached_gray = cv2.cvtColor(img_blur, cv2.COLOR_RGB2GRAY)
-            
-            self.auto_detect_enabled = False
-            self.btn_auto.config(text="Auto Detect: OFF", fg="red")
-            
-            self._ignore_sliders = True 
-            
-            # INTENSITY DUAL SLIDER
-            if state.get('int_min') is None or state.get('int_min') == 0:
-                otsu_val = filters.threshold_otsu(self.cached_gray)
-                state['int_min'] = int(otsu_val)
-                state['int_max'] = 255 
-                
-            self.int_slider.set_values(state.get('int_min', 0), state.get('int_max', 255))
-
-            # HUE SLIDER
-            self.hue_slider.set_values(state.get('hue_min', 0), state.get('hue_max', 179))
-            
-            # AREA DUAL SLIDER
-            if 'area_min_pos' not in state: state['area_min_pos'] = 30
-            if 'area_max_pos' not in state: state['area_max_pos'] = 1000
-            
-            self.area_slider.set_values(state['area_min_pos'], state['area_max_pos'])
-
-            # CIRCULARITY SLIDER
-            if 'circ_min' not in state: state['circ_min'] = 0
-            if 'circ_max' not in state: state['circ_max'] = 100
-            
-            self.circ_slider.set_values(state.get('circ_min', 0))
-
-            self._ignore_sliders = False 
-
-            self.process_image()
-            
-            # --- NEW: Automatically start fetching adjacent images in the background ---
-            self.manage_cache_pipeline()
-            
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
+        return None
 
     # --- Mouse Events for Zooming and Scrooling ---
     def on_mousewheel_zoom(self, event):
@@ -851,7 +857,8 @@ class QuantificationTab(ttk.Frame):
                 areas_total = sum([r.area for r in final_regions])
                 area_percentage = (areas_total / total_pixels) * 100 if total_pixels > 0 else 0
 
-                if 'pixel_size_um' not in state:
+                # Force extraction if the scale is missing, None, or sitting at a default 0.0
+                if state.get('pixel_size_um') in (None, 0.0, 0):
                     state['pixel_size_um'] = self.get_pixel_size_um(state['file_path'])
                 
                 pixel_size = state['pixel_size_um']
