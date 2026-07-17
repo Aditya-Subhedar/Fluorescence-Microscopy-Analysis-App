@@ -24,6 +24,7 @@ from tab3_representation import MaskMergerTab
 from tab4_panel_creation import PanelCreationTab 
 from tab5_golgi_cox_analysis import GolgiTab
 from tab6_graph_creation import GraphCreationTab
+from tab7_about_us import AboutUsTab
 
 class CytoQuantApp:
     def __init__(self, root):
@@ -88,6 +89,9 @@ class CytoQuantApp:
         # Swapped instantiation to GraphCreationTab
         self.tab6 = GraphCreationTab(self.notebook)
         self.notebook.add(self.tab6, text="6. Graph Generation  ")
+
+        self.tab7 = AboutUsTab(self.notebook)
+        self.notebook.add(self.tab7, text="ℹ️ About Us ")
 
         # Build the visual components of the grid menu on our home page
         self.build_welcome_dashboard()
@@ -179,15 +183,25 @@ class CytoQuantApp:
 
         # --- ANIMATED ENTRANCE CASCADE ---
         for index, item in enumerate(self.modules_config):
-            self.root.after(index * 75, lambda conf=item: self.render_dashboard_tile(grid_container, conf))
+            self.root.after(index * 40, lambda conf=item: self.render_dashboard_tile(grid_container, conf))
 
     def render_dashboard_tile(self, parent, conf):
-        """Assembles an interactive module button card inside our main grid layout container."""
+        """Assembles an interactive module button card with a smooth Apple-style zoom-in animation."""
         row_idx, col_idx = conf["grid"]
         
-        # Outer card boundary container
-        tile_card = tk.Frame(parent, bd=1, relief=tk.SOLID, bg="#ffffff", cursor="hand2")
-        tile_card.grid(row=row_idx, column=col_idx, padx=15, pady=15, sticky="nsew")
+        # 1. Static invisible container cell to hold the layout structure
+        cell_frame = tk.Frame(parent, bg="#f8f9fa")
+        cell_frame.grid(row=row_idx, column=col_idx, padx=15, pady=15, sticky="nsew")
+
+        # 2. Outer card boundary container (placed relative inside the cell)
+        tile_card = tk.Frame(cell_frame, bd=1, relief=tk.SOLID, bg="#ffffff", cursor="hand2")
+        
+        # Start the card at 70% scale and slightly offset downwards
+        start_scale = 0.70
+        start_y_offset = 0.15 
+        start_xy = (1.0 - start_scale) / 2
+        
+        tile_card.place(relx=start_xy, rely=start_xy + start_y_offset, relwidth=start_scale, relheight=start_scale)
 
         # Decorative side accent color bar
         accent_bar = tk.Frame(tile_card, bg=conf["color"], height=4)
@@ -205,27 +219,61 @@ class CytoQuantApp:
         lbl_title = tk.Label(body, text=conf["title"], font=("Arial", 12, "bold"), bg="#ffffff", fg="#2c3e50")
         lbl_title.pack(anchor="nw", pady=(10, 5))
 
-        # Description text block (Anchored NW to prevent left-side clipping)
+        # Description text block
         lbl_desc = tk.Label(body, text=conf["desc"], font=("Arial", 10), bg="#ffffff", fg="#7f8c8d", justify=tk.LEFT)
         lbl_desc.pack(anchor="nw", fill=tk.BOTH, expand=True)
 
-        # Dynamic text wrapping with a safe pixel buffer
         def update_wraplength(event, label=lbl_desc):
-            # Subtracting 45px to safely account for the body frame's 20px padding on each side
             safe_width = max(200, event.width - 45) 
             label.config(wraplength=safe_width)
             
         body.bind("<Configure>", update_wraplength)
 
-        # Connect left click events on all child components to jump to the chosen tab index
         for widget in (tile_card, body, lbl_icon, lbl_title, lbl_desc):
             widget.bind("<Button-1>", lambda event, idx=conf["target_idx"]: self.switch_to_pipeline_tab(idx))
 
-        # Add hover highlighting states
+        # Hover states
         tile_card.bind("<Enter>", lambda e: tile_card.config(relief=tk.RAISED, bd=2))
         tile_card.bind("<Leave>", lambda e: tile_card.config(relief=tk.SOLID, bd=1))
         body.bind("<Enter>", lambda e: tile_card.config(relief=tk.RAISED, bd=2))
         body.bind("<Leave>", lambda e: tile_card.config(relief=tk.SOLID, bd=1))
+
+        # 3. Trigger the zoom animation loop
+        self.animate_zoom_in(tile_card, start_scale, start_y_offset)
+
+    def animate_zoom_in(self, widget, current_scale, current_y_offset):
+        """Creates an Apple-style ease-out spring effect expanding from the center."""
+        target_scale = 1.0
+        target_y_offset = 0.0
+        
+        # 25% ease out - provides a very snappy, premium feel
+        new_scale = current_scale + (target_scale - current_scale) * 0.25
+        new_y_offset = current_y_offset + (target_y_offset - current_y_offset) * 0.25
+        
+        # If we are almost at the target, snap it to 100% and finish
+        if (target_scale - new_scale) < 0.01:
+            widget.place(relx=0, rely=0, relwidth=1.0, relheight=1.0)
+        else:
+            # Calculate the x and y offsets to keep it perfectly centered as it grows
+            xy_offset = (1.0 - new_scale) / 2
+            widget.place(relx=xy_offset, rely=xy_offset + new_y_offset, relwidth=new_scale, relheight=new_scale)
+            # Run at ~60 FPS (16ms)
+            widget.after(16, self.animate_zoom_in, widget, new_scale, new_y_offset)
+
+    def animate_slide_up(self, widget, current_y):
+        """Creates a smooth, hardware-like ease-out deceleration effect."""
+        target_y = 0
+        
+        # Ease-out formula: move 20% of the remaining distance per frame
+        new_y = current_y + (target_y - current_y) * 0.20
+        
+        if abs(new_y) < 0.5:
+            # Snap to final position and finish
+            widget.place(relx=0, rely=0, relwidth=1.0, relheight=1.0, y=0)
+        else:
+            # Update position and schedule next frame (~60 FPS)
+            widget.place(relx=0, rely=0, relwidth=1.0, relheight=1.0, y=new_y)
+            widget.after(16, self.animate_slide_up, widget, new_y)
 
     def switch_to_pipeline_tab(self, index_id):
         """Transitions notebook selections seamlessly into active data loops."""
@@ -241,7 +289,8 @@ class CytoQuantApp:
             3: self.tab3,
             4: self.tab4,
             5: self.tab5,
-            6: self.tab6
+            6: self.tab6,
+            7: self.tab7
         }
         
         target_tab = tab_mapping.get(active_idx)
