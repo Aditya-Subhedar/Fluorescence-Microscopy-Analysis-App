@@ -576,8 +576,9 @@ class PreProcessingTab(ttk.Frame):
         """Opens a pop-up window for user-friendly scale bar customization."""
         opts = tk.Toplevel(self)
         opts.title("Scale Bar Settings")
-        # Increased height from 220 to 260 to fit the new row
-        opts.geometry("280x260") 
+        
+        # INCREASED HEIGHT to 320 so the button is fully visible
+        opts.geometry("280x320") 
         opts.attributes('-topmost', True) # Keeps the pop-up above the main app
         opts.resizable(False, False)
         
@@ -597,7 +598,8 @@ class PreProcessingTab(ttk.Frame):
         spn_thick = make_row(opts, "Thickness (px):", tk.Spinbox, from_=1, to=100, width=10)
         spn_thick.delete(0, tk.END); spn_thick.insert(0, self.spin_sb_thick.get())
         
-        spn_font = make_row(opts, "Font Scale:", tk.Spinbox, from_=0.1, to=5.0, increment=0.1, width=10)
+        # CHANGED: 'from_=' is now 0.0 to allow hiding the text
+        spn_font = make_row(opts, "Font Scale:", tk.Spinbox, from_=0.0, to=5.0, increment=0.1, width=10)
         spn_font.delete(0, tk.END); spn_font.insert(0, self.spin_sb_font.get())
         
         cmb_color = make_row(opts, "Color:", ttk.Combobox, values=["White", "Black", "Red", "Green", "Blue", "Yellow"], width=10)
@@ -643,10 +645,15 @@ class PreProcessingTab(ttk.Frame):
             pixel_size_um = float(self.entry_pixel_size.get())
             user_width_um = float(self.entry_sb_width.get())
             thickness = int(self.spin_sb_thick.get())
-            font_size = int(float(self.spin_sb_font.get()) * 14) # Convert to Tkinter font scale
+            
+            # --- FIX 1: Explicitly check if we should draw text ---
+            raw_font_scale = float(self.spin_sb_font.get())
+            show_text = raw_font_scale > 0.0
+            font_size = int(raw_font_scale * 14) # Convert to Tkinter font scale
+            
             color_name = self.combo_sb_color.get()
             
-            # ---> NEW: Fetch the position safely <---
+            # Fetch the position safely
             position = "Bottom Left" # Default fallback
             if hasattr(self, 'combo_sb_position'):
                 position = self.combo_sb_position.get()
@@ -674,7 +681,6 @@ class PreProcessingTab(ttk.Frame):
 
         margin_x, margin_y = 30, 30
 
-        # ---> NEW: Position Logic <---
         # Determine X coordinates
         if "Left" in position:
             x1 = margin_x
@@ -684,7 +690,9 @@ class PreProcessingTab(ttk.Frame):
             x2 = canvas_w - margin_x
 
         # Determine Y coordinates
-        text_offset = font_size + 5 # Dynamic spacing based on font size
+        # Only add a text offset if the text is actually being shown
+        text_offset = (font_size + 10) if show_text else 0 
+        
         if "Top" in position:
             y1 = margin_y + text_offset
             y2 = y1 + thickness
@@ -693,7 +701,10 @@ class PreProcessingTab(ttk.Frame):
             y2 = canvas_h - margin_y
 
         text_x = x1 + (actual_screen_pixels / 2)
-        text_y = y1 - (font_size / 2) - 4
+        
+        # --- FIX 2: Strict gap above the bar ---
+        # We place the text exactly 5 pixels above the top edge (y1)
+        text_y = y1 - 5 
 
         # Format text to remove .0 if it's a whole number (e.g., 50.0 -> 50)
         text_val = int(user_width_um) if float(user_width_um).is_integer() else round(user_width_um, 2)
@@ -707,14 +718,23 @@ class PreProcessingTab(ttk.Frame):
         bar_color = color_map.get(color_name, "white")
         outline_color = "black" if bar_color in ["white", "yellow", "#00FF00"] else "white"
 
-        # Draw Shadow/Outline (for visibility against light/dark backgrounds)
+        # --- DRAWING PHASE ---
+        
+        # Draw Background Shadow/Outline (Bar)
         self.canvas.create_rectangle(x1-2, y1-2, x2+2, y2+2, fill=outline_color, outline=outline_color, tags="scalebar")
-        for dx, dy in [(-1,-1), (-1,1), (1,-1), (1,1)]:
-            self.canvas.create_text(text_x+dx, text_y+dy, text=text, fill=outline_color, font=("Arial", font_size, "bold"), tags="scalebar")
+        
+        # Draw Background Shadow/Outline (Text)
+        if show_text:
+            for dx, dy in [(-1,-1), (-1,1), (1,-1), (1,1)]:
+                # anchor="s" ensures the text grows UPWARDS from the bottom, preventing overlap
+                self.canvas.create_text(text_x+dx, text_y+dy, text=text, fill=outline_color, font=("Arial", font_size, "bold"), anchor="s", tags="scalebar")
             
-        # Draw Foreground
+        # Draw Foreground (Bar)
         self.canvas.create_rectangle(x1, y1, x2, y2, fill=bar_color, outline=bar_color, tags="scalebar")
-        self.canvas.create_text(text_x, text_y, text=text, fill=bar_color, font=("Arial", font_size, "bold"), tags="scalebar")
+        
+        # Draw Foreground (Text)
+        if show_text:
+            self.canvas.create_text(text_x, text_y, text=text, fill=bar_color, font=("Arial", font_size, "bold"), anchor="s", tags="scalebar")
 
     def stamp_scale_bar_for_export(self, image_rgb):
         """Burns a physical scale bar into the numpy image array using OpenCV at a specified position."""
