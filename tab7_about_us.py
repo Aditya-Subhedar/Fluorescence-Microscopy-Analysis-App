@@ -22,9 +22,9 @@ class AboutUsTab(tk.Frame):
             "Under the Guidance of:\n"
             "• Dr. Amul J. Sakharkar (SPPU)\n"
             "• Prof. Aurnab Ghose (IISER Pune)\n"
-            "• Nishikant Subhedar (IISER Pune)\n\n"
+            "• Prof. Nishikant Subhedar (IISER Pune)\n\n"
             "In Collaboration with PhD and MSc Students:\n"
-            "Namrata Pawar (SPPU), Vaishnavi Borade (SPPU), Maithili Borkute (SPPU)"
+            "Namrata Pawar (SPPU), Vaishnavi Borade (SPPU), Maithili Borkute (SPPU), Anushka Walupante (SPPU), Unmani Harsulkar (SPPU)"
         )
         
         lbl_info = tk.Label(container, text=info_text, font=("Arial", 11), bg="#ffffff", fg="#495057", justify=tk.CENTER)
