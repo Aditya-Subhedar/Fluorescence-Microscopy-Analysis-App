@@ -1963,14 +1963,16 @@ class PreProcessingTab(ttk.Frame):
 
             # 2. Extract resolution metadata safely
             try:
+                # IMPORTANT: Ensure this matches your actual UI variable name
                 pixel_size_um = float(self.entry_pixel_size.get())
-            except (ValueError, AttributeError):
+            except Exception as e:
+                print(f"Warning: {e}")
                 pixel_size_um = 0 
                 
-            res_fraction = None
+            resolution_val = None
             if pixel_size_um > 0:
+                # 10,000 um in a cm. This gives us Pixels per Centimeter.
                 resolution_val = 10000.0 / pixel_size_um
-                res_fraction = float(resolution_val).as_integer_ratio()
 
             # ---------------------------------------------------------
             # PATH A: MULTI-DIMENSIONAL STACK EXPORT
@@ -1990,12 +1992,24 @@ class PreProcessingTab(ttk.Frame):
                 # Setup writing arguments
                 write_kwargs = {"compression": "zlib"}
                 
-                if res_fraction:
+                if resolution_val:
+                    # Pass the float directly for both X and Y. tifffile handles the rational math internally.
                     write_kwargs.update({
-                        "resolution": res_fraction,
-                        "resolutionunit": 3,
-                        "metadata": {'unit': 'um', 'axes': 'ZYXC'}
+                        "resolution": (float(resolution_val), float(resolution_val)),
+                        "resolutionunit": 3, 
                     })
+                    
+                    # Strict Metadata Injection for OME-TIFF / ImageJ
+                    if is_ome_tif:
+                        write_kwargs["metadata"] = {
+                            'PhysicalSizeX': pixel_size_um,
+                            'PhysicalSizeXUnit': 'µm',
+                            'PhysicalSizeY': pixel_size_um,
+                            'PhysicalSizeYUnit': 'µm',
+                            'axes': 'ZYXC' if save_as_stack else 'YXC'
+                        }
+                    else:
+                        write_kwargs["metadata"] = {'unit': 'um'}
                     
                 if is_ome_tif:
                     write_kwargs["ome"] = True # Enforce strict OME-XML structure
@@ -2021,19 +2035,34 @@ class PreProcessingTab(ttk.Frame):
                 final_rgb = self.stamp_scale_bar_for_export(final_rgb)
                 final_rgb = np.ascontiguousarray(final_rgb)
                 
+                # --- NEW: Explicitly check for TIFF formats first ---
                 if is_ome_tif or is_standard_tif:
-                    write_kwargs = {"compression": "zlib"}
-                    if res_fraction:
+                    write_kwargs = {"compression": "zlib"} # Initialize the dictionary!
+                    
+                    if resolution_val:
                         write_kwargs.update({
-                            "resolution": res_fraction,
-                            "resolutionunit": 3,
-                            "metadata": {'unit': 'um'}
+                            "resolution": (float(resolution_val), float(resolution_val)),
+                            "resolutionunit": 3, 
                         })
-                    if is_ome_tif:
-                        write_kwargs["ome"] = True
                         
+                        if is_ome_tif:
+                            write_kwargs["metadata"] = {
+                                'PhysicalSizeX': pixel_size_um,
+                                'PhysicalSizeXUnit': 'µm',
+                                'PhysicalSizeY': pixel_size_um,
+                                'PhysicalSizeYUnit': 'µm',
+                                'axes': 'YXC' # Fixed to YXC since this is a 2D slice
+                            }
+                        else:
+                            write_kwargs["metadata"] = {'unit': 'um'}
+                            
+                    if is_ome_tif:
+                        write_kwargs["ome"] = True 
+                        
+                    # Actually save the TIFF file!
                     tifffile.imwrite(file_path, final_rgb, **write_kwargs)
                     
+                # --- PNG / JPEG Fallbacks ---
                 elif file_path.lower().endswith('.png'):
                     final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
                     cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
