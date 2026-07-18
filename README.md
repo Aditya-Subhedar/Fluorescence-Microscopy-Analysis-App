@@ -7,7 +7,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 ## Features
 
 ### 📍 Tab 1: Microscope Image Preprocessing
-* **Robust File Support:** Robustly loads OME file formats such as OME-TIFF, TIF, CZI (Zeiss), LIF (Leica), ND2 (Nikon), OIB (Olympus) files.
+* **Robust File Support:** Robustly loads OME file formats such as OME-TIFF, TIF, CZI (Zeiss), LIF (Leica), ND2 (Nikon), OIB, OIF, OIR (Olympus) files.
 * **Intelligent Dimension Correction:** Auto range expansion, Multiple Z-stack collapsing methods, Color-Channel pseudocoloring and unstitched mosaic issues inherent in raw python microscopy readers.
 * **Image Management:** Features a multi-image navigation bar supporting `askopenfilenames` (batch select) with keyboard arrow shortcut support (←/→), traverse z-stack using up-down arrow keys (↑,↓) for streamlined workflow.
 * **Fluid Viewport Control:** Lag-free interactive canvas supporting precise scroll-wheel zooming and smooth click-and-drag panning.
