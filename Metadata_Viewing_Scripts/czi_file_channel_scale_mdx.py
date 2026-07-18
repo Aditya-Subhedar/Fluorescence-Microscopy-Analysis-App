@@ -142,7 +142,7 @@ def extract_czi_images_metadata(file_path):
 
 # --- Main Console Execution Loop ---
 if __name__ == "__main__":
-    file_path = r"IHC input images\.czi\3 Channel\10_A1.czi"
+    file_path = r"  \file_path\... "
     print(f"Analyzing CZI File: {file_path}\n" + "="*50)
     
     all_images_meta = extract_czi_images_metadata(file_path)
