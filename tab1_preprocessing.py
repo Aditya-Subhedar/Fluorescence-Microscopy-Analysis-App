@@ -46,6 +46,10 @@ class PreProcessingTab(ttk.Frame):
         self.current_pil_image = None
         self.tk_img = None  # Matches self.tk_img used in update_preview / redraw_image
 
+        # --- NEW: Time/Video Playback State ---
+        self.is_playing = False
+        self.play_job_id = None  # To store the 'after' loop ID for cancelling playback
+
         # 9. UI Orchestration
         self.setup_ui()
         if hasattr(self, 'maximize_window'):
@@ -76,7 +80,7 @@ class PreProcessingTab(ttk.Frame):
         self.lbl_filename = tk.Label(action_frame, text="No file loaded", fg="gray", wraplength=330)
         self.lbl_filename.pack(pady=(5, 0))
 
-        # --- NEW: Multi-Image Navigation Bar ---
+        # --- Multi-Image Navigation Bar ---
         self.nav_images_frame = tk.Frame(action_frame)
         self.nav_images_frame.pack(fill=tk.X, pady=5)
         
@@ -92,18 +96,44 @@ class PreProcessingTab(ttk.Frame):
 
         tk.Button(action_frame, text="2. Save Processed Image As...", command=self.save_image_to_disk, font=("Arial", 11, "bold"), bg="#2e7d32", fg="white").pack(fill=tk.X, pady=5)
 
+        # ---------------------------------------------------------
         # Z-Navigation
+        # ---------------------------------------------------------
         nav_frame = tk.LabelFrame(control_frame, text="Stack Preview Navigation", padx=5, pady=2)
         nav_frame.pack(fill=tk.X, pady=2)
         
         self.lbl_z_current = tk.Label(nav_frame, text="Current Stack: 0")
         self.lbl_z_current.pack()
         
-            # Link the slider to our interceptor function
+        # Link the slider to our interceptor function
         self.scale_z = tk.Scale(nav_frame, from_=0, to=0, orient=tk.HORIZONTAL, showvalue=0, command=self.on_z_slider_move)
         self.scale_z.pack(fill=tk.X)
 
+        # ---------------------------------------------------------
+        # --- NEW: Time (T) Navigation & Playback ---
+        # ---------------------------------------------------------
+        # Dynamically look up the widget right above this section to preserve layout hierarchy
+        prior_widgets = control_frame.winfo_children()
+        self._widget_before_t_nav = prior_widgets[-1] if prior_widgets else None
+
+        # Create the panel directly inside control_frame (NOT packed by default!)
+        self.t_nav_frame = tk.LabelFrame(control_frame, text="Time / Video Navigation", padx=5, pady=2)
+        
+        self.lbl_t_current = tk.Label(self.t_nav_frame, text="Current Frame: 0")
+        self.lbl_t_current.pack()
+
+        t_slider_frame = tk.Frame(self.t_nav_frame)
+        t_slider_frame.pack(fill=tk.X, pady=2)
+
+        self.btn_play_t = tk.Button(t_slider_frame, text="▶ Play", command=self.toggle_time_playback, width=6)
+        self.btn_play_t.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.scale_t = tk.Scale(t_slider_frame, from_=0, to=0, orient=tk.HORIZONTAL, showvalue=0, command=self.on_t_slider_move)
+        self.scale_t.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # ---------------------------------------------------------
         # Merge Range (Z-Projection) 
+        # ---------------------------------------------------------
         proj_frame = tk.LabelFrame(control_frame, text="Z-Projection Merge Range", padx=5, pady=2)
         proj_frame.pack(fill=tk.X, pady=2)
         
@@ -115,7 +145,7 @@ class PreProcessingTab(ttk.Frame):
         self.spin_z_end = tk.Spinbox(proj_frame, from_=0, to=0, width=4, command=self.update_preview)
         self.spin_z_end.grid(row=1, column=1, pady=2, padx=2)
 
-        # --- NEW: Z-Projection Method Dropdown ---
+        # Z-Projection Method Dropdown
         tk.Label(proj_frame, text="Method:").grid(row=2, column=0, sticky="e", pady=2)
         self.combo_proj_method = ttk.Combobox(proj_frame, values=["Max IP", "Mean IP", "Sum IP", "Min IP"], state="readonly", width=8)
         self.combo_proj_method.grid(row=2, column=1, pady=2, padx=2)
@@ -196,8 +226,6 @@ class PreProcessingTab(ttk.Frame):
         tk.Button(scale_frame, text="More Options", command=self.open_scale_bar_options).pack(fill=tk.X, pady=5)
 
         # --- HIDDEN VARIABLES FOR BACKGROUND CALIBRATION ---
-        # Kept in a hidden frame so the metadata extractor and draw_scale_bar() 
-        # can still operate perfectly without cluttering the main UI.
         self.hidden_sb_frame = tk.Frame(self)
         
         self.entry_pixel_size = tk.Entry(self.hidden_sb_frame)
@@ -217,7 +245,7 @@ class PreProcessingTab(ttk.Frame):
         self.combo_sb_color = ttk.Combobox(self.hidden_sb_frame, values=["White", "Black", "Red", "Green", "Blue", "Yellow"])
         self.combo_sb_color.set("White")
         
-        # ---> NEW: Hidden combobox to store position <---
+        # Hidden combobox to store position
         self.combo_sb_position = ttk.Combobox(self.hidden_sb_frame, values=["Bottom Right", "Bottom Left", "Top Right", "Top Left"])
         self.combo_sb_position.set("Bottom Left")
         # ---------------------------------------------------
@@ -241,21 +269,15 @@ class PreProcessingTab(ttk.Frame):
 
         # TRACKPAD PANNING BINDINGS (Right-Click Drag)
         self.canvas.bind("<ButtonPress-3>", self.on_pan_start)             # Right-Click Press
-        self.canvas.bind("<B3-Motion>", self.on_pan_drag)                   # Right-Click Drag Move
+        self.canvas.bind("<B3-Motion>", self.on_pan_drag)                  # Right-Click Drag Move
         self.canvas.bind("<ButtonRelease-3>", self.on_pan_end)             # Restore cursor on release
 
-        # NEW: TWO-FINGER TRACKPAD PANNING BINDINGS (Windows / macOS)
+        # TWO-FINGER TRACKPAD PANNING BINDINGS (Windows / macOS)
         self.canvas.bind("<MouseWheel>", self.on_trackpad_pan, add="+")       # Vertical Trackpad Pan
         self.canvas.bind("<Shift-MouseWheel>", self.on_trackpad_pan)          # Horizontal Trackpad Pan
         
         # Double click left mouse button (or double tap trackpad) to instantly reset view
         self.canvas.bind("<Double-Button-1>", self.reset_view_layout)       # Center Image to the Window with Double Click
-
-
-        # # --- Keyboard bindings for Left/Right arrows ---
-        # top = self.winfo_toplevel()
-        # top.bind("<Left>", lambda e: self.prev_image() if self.btn_prev_img['state'] == tk.NORMAL else None)
-        # top.bind("<Right>", lambda e: self.next_image() if self.btn_next_img['state'] == tk.NORMAL else None)
 
 # --- Preview zoom and pan ---
     def on_zoom(self, event):
@@ -872,8 +894,8 @@ class PreProcessingTab(ttk.Frame):
         from tkinter import filedialog
         
         file_paths = filedialog.askopenfilenames(
-            title="Select Microscopy Images (CZI, LIF, TIFF, ND2, OIB)", 
-            filetypes=[("Microscopy Files", "*.czi *.lif *.tif *.tiff *.nd2 *.oib")]
+            title="Select Microscopy Images (CZI, LIF, TIFF, ND2, OIB, OIR)", 
+            filetypes=[("Microscopy Files", "*.czi *.lif *.tif *.tiff *.nd2 *.oib *.oir")]
         )
         if not file_paths: return
 
@@ -985,6 +1007,10 @@ class PreProcessingTab(ttk.Frame):
 
     def load_image_from_index(self):
         """Loads the current file, normalizes it to a standard ZYXC matrix, and initializes UI."""
+        # --- RESET TIMELAPSE REGISTERS FOR FRESH LOAD ---
+        self.total_time_points = 1
+        if hasattr(self, 'full_5d_volume'):
+            del self.full_5d_volume
         if not hasattr(self, 'loaded_files') or not self.loaded_files: return
 
         # --- EXTRACT THE SPECIFIC ITEM DATA ---
@@ -1415,6 +1441,52 @@ class PreProcessingTab(ttk.Frame):
                     
                     self.original_num_channels = img.shape[3]
 
+            elif file_path.lower().endswith('.oir'):
+                import numpy as np
+                try:
+                    import oirfile
+                except ImportError:
+                    raise ImportError("The 'oirfile' library is required to read .oir files.")
+
+                with oirfile.OirFile(file_path) as oir:
+                    if hasattr(oir, 'asarray'):
+                        raw_data = oir.asarray()
+                    elif hasattr(oir, 'data'):
+                        raw_data = oir.data
+                    else:
+                        raise ValueError("Could not find image data in OIR file.")
+                        
+                    # Extract and format to standard 4D (Z, Y, X, C)
+                    if raw_data.ndim == 5: # (T, Z, C, Y, X)
+                        self.full_5d_volume = np.transpose(raw_data, (0, 1, 3, 4, 2))
+                        img = self.full_5d_volume[0] 
+                        self.total_time_points = self.full_5d_volume.shape[0]
+                        self.scale_t.config(to=self.total_time_points - 1)
+                    elif raw_data.ndim == 4: # (Z, C, Y, X)
+                        img = np.transpose(raw_data, (0, 2, 3, 1))
+                    elif raw_data.ndim == 3: # (C, Y, X)
+                        temp_img = np.transpose(raw_data, (1, 2, 0))
+                        img = np.expand_dims(temp_img, axis=0) 
+
+                    # --- DYNAMIC HEX-DRIVEN UI COLOR INJECTION ---
+                    # Defined list of target hex colors for microscopy channels
+                    hex_colors = ["#FF0000", "#00FF00", "#0000FF", "#00FFFF", "#FF00FF", "#FFFF00", "#FFFFFF"]
+                    num_channels = img.shape[-1]
+                    
+                    self._temp_extracted_channels = []
+                    for c in range(num_channels):
+                        # Safely cycle through the hex list if channels exceed the palette size
+                        hex_str = hex_colors[c % len(hex_colors)]
+                        
+                        # Programmatically derive the RGB tuple purely from the hex string
+                        rgb_tuple = tuple(int(hex_str.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+                        
+                        self._temp_extracted_channels.append({
+                            "name": f"Channel {c + 1}",
+                            "rgb": rgb_tuple,
+                            "hex": hex_str
+                        })
+
             else:
                 import tifffile
                 import io
@@ -1551,7 +1623,7 @@ class PreProcessingTab(ttk.Frame):
             # 2. UNIVERSAL PIPELINE (Format-Agnostic from here down)
             # =========================================================
             
-            c_total = img.shape[3]
+            c_total = img.shape[-1]
             dynamic_channel_list = []
             
             # Default UI Palette (Reordered to standard microscopy: Blue, Green, Red)
@@ -1566,7 +1638,7 @@ class PreProcessingTab(ttk.Frame):
             ]
 
             # --- SMART SINGLE-CHANNEL OVERRIDE ---
-            # If the image is just 1 channel, default to Green instead of Blue
+            # If the image is just 1 channel, default to Green
             if c_total == 1:
                 palette[0] = ((0, 255, 0), "#00FF00") 
                 # Note: If you ever prefer raw data to look Grayscale, 
@@ -1643,13 +1715,33 @@ class PreProcessingTab(ttk.Frame):
             if file_path.lower().endswith('.czi'):
                 pixel_size = self.get_czi_pixel_size_um(file_path)
             elif file_path.lower().endswith('.lif'):
-                pixel_size = self.get_lif_pixel_size_um(file_path, series_idx) # PASS SPECIFIC SERIES INDEX!
+                pixel_size = self.get_lif_pixel_size_um(file_path, series_idx)
                 
             if pixel_size and hasattr(self, 'entry_pixel_size'):
                 self.entry_pixel_size.delete(0, 'end')
                 self.entry_pixel_size.insert(0, str(pixel_size))
             
             self.lbl_filename.config(text=self.original_filename)
+
+            # === BINDING TIME-LAPSE UI VISIBILITY ===
+            if getattr(self, 'total_time_points', 1) > 1:
+                # Sync slider bounds
+                self.scale_t.config(to=self.total_time_points - 1)
+                
+                # Reveal panel exactly underneath the preceding widget slot
+                if hasattr(self, '_widget_before_t_nav') and self._widget_before_t_nav:
+                    self.t_nav_frame.pack(fill=tk.X, pady=2, after=self._widget_before_t_nav)
+                else:
+                    self.t_nav_frame.pack(fill=tk.X, pady=2)
+            else:
+                # Cleanly shut down playback loops if running
+                if getattr(self, 'is_playing', False):
+                    self.toggle_time_playback()
+                # Reset counters and drop the frame entirely out of the layout manager
+                self.current_time_point = 0
+                self.t_nav_frame.pack_forget()
+            # =======================================
+            
             self.update_preview()
             
         except Exception as e:
@@ -1657,6 +1749,71 @@ class PreProcessingTab(ttk.Frame):
             traceback.print_exc()
             self.lbl_filename.config(text="Load failed")
             self.canvas.delete("all")
+
+    # --- oir playback functions ---
+    def toggle_time_playback(self):
+        """Toggles the playback state for time-lapse sequences."""
+        # Prevent playback if no time-lapse data exists
+        if not hasattr(self, 'total_time_points') or self.total_time_points <= 1:
+            return 
+            
+        self.is_playing = not self.is_playing
+        
+        if self.is_playing:
+            self.btn_play_t.config(text="⏸ Pause")
+            self.playback_loop()
+        else:
+            self.btn_play_t.config(text="▶ Play")
+            if self.play_job_id is not None:
+                self.after_cancel(self.play_job_id)
+                self.play_job_id = None
+
+    def playback_loop(self):
+        """Advances the time sequence frame by frame."""
+        if not self.is_playing:
+            return
+            
+        # Get current time point and advance it
+        current_t = self.scale_t.get()
+        next_t = current_t + 1
+        
+        # Loop back to the beginning if we reach the end
+        if next_t >= getattr(self, 'total_time_points', 1):
+            next_t = 0
+            
+        # Setting the scale will automatically trigger on_t_slider_move
+        self.scale_t.set(next_t)
+        
+        # Schedule the next frame (200ms = 5 frames per second)
+        # Adjust the '200' value to make playback faster or slower
+        self.play_job_id = self.after(200, self.playback_loop)
+
+    def on_t_slider_move(self, val):
+        """Handles manual or automated time slider movement."""
+        t_val = int(float(val))
+        self.current_time_point = t_val
+        self.lbl_t_current.config(text=f"Current Frame: {t_val}")
+        
+        # If we have 5D time-lapse data, dynamically swap the active 4D volume
+        if hasattr(self, 'full_5d_volume'):
+            import numpy as np
+            self.original_raw_volume = self.full_5d_volume[t_val].astype(np.float32)
+            self.raw_volume = self.original_raw_volume
+            
+            # Fast Cache: Recalculate spatial downsampling percentiles for the new time frame
+            c_total = self.raw_volume.shape[-1]
+            self.z_percentiles = {}
+            for z in range(self.max_z + 1):
+                self.z_percentiles[z] = []
+                for c in range(c_total):  
+                    ch_data_sampled = self.raw_volume[z, ::4, ::4, c]
+                    p_min, p_max = np.percentile(ch_data_sampled, (1.0, 99.9))
+                    val_range = float(p_max - p_min) if (p_max - p_min) > 0 else 1.0
+                    self.z_percentiles[z].append((p_min, val_range))
+                    
+        # Trigger the original preview updater
+        if hasattr(self, 'update_preview'):
+            self.update_preview()
 
     # --- Processing ---
     def apply_image_math(self, image_multi, current_z=None):
@@ -1792,8 +1949,14 @@ class PreProcessingTab(ttk.Frame):
         """The actual heavy preview updater, optimized for strict cache hits and PIL image generation."""
         self._preview_after_id = None
         
+        # --- NEW: Safely get the current Time (T) index ---
+        current_t = getattr(self, 'current_time_point', 0)
+        if self.raw_volume.ndim == 5 and current_t >= self.raw_volume.shape[0]:
+            current_t = 0
+        
         # 1. Pull the raw matrix data frame out of RAM cache
         if self.is_merged_preview:
+            import numpy as np
             try:
                 z_start = max(0, min(int(self.spin_z_start.get()), self.max_z))
                 z_end = max(0, min(int(self.spin_z_end.get()), self.max_z))
@@ -1803,7 +1966,12 @@ class PreProcessingTab(ttk.Frame):
                 z_start, z_end = 0, self.max_z
                 
             self.lbl_z_current.config(text=f"Previewing Merge: Stacks {z_start} to {z_end}")
-            stack_slice = self.raw_volume[z_start:z_end+1]
+            
+            # Extract the correct Z-range for the current Time frame
+            if self.raw_volume.ndim == 5:
+                stack_slice = self.raw_volume[current_t, z_start:z_end+1]
+            else:
+                stack_slice = self.raw_volume[z_start:z_end+1]
             
             # Map dropdown string selections safely
             combo_method = getattr(self, 'combo_proj_method', None)
@@ -1822,7 +1990,12 @@ class PreProcessingTab(ttk.Frame):
         else:
             self.current_z_idx = int(float(self.scale_z.get()))
             self.lbl_z_current.config(text=f"Current Stack: {self.current_z_idx}")
-            self.active_raw_slice = self.raw_volume[self.current_z_idx]
+            
+            # Extract the correct Z-slice for the current Time frame
+            if self.raw_volume.ndim == 5:
+                self.active_raw_slice = self.raw_volume[current_t, self.current_z_idx]
+            else:
+                self.active_raw_slice = self.raw_volume[self.current_z_idx]
 
         img_h, img_w = self.active_raw_slice.shape[:2]
         if img_w == 0 or img_h == 0: 
@@ -1846,7 +2019,8 @@ class PreProcessingTab(ttk.Frame):
             self.img_y = self.img_offset_y
             self._initialized_view = True
 
-        # 3. FIX: Process matrix parameters and generate self.current_pil_image for panning
+        # 3. Process matrix parameters and generate self.current_pil_image for panning
+        import PIL.Image
         view_image_uint8 = self.apply_image_math(self.active_raw_slice, self.current_z_idx)
         self.current_pil_image = PIL.Image.fromarray(view_image_uint8)
 
@@ -1859,7 +2033,8 @@ class PreProcessingTab(ttk.Frame):
             return
 
         import numpy as np
-        from PIL import Image, ImageTk
+        import PIL.Image
+        import PIL.ImageTk
         import tkinter as tk
         import cv2
 
