@@ -129,7 +129,7 @@ def extract_nd2_images_metadata(file_path):
 
 
 # Executing against target path
-file_path = r"IHC input images\.nd2\C3_N01Ato5_nucleo-trans_div3_mSG_b2s_200ms_30%_Reconstructed.nd2"
+file_path = r"  \file_path\... "
 print(f"Analyzing ND2 File: {file_path}\n" + "="*50)
 
 all_images_meta = extract_nd2_images_metadata(file_path)
