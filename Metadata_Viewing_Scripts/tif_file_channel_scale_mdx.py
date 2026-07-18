@@ -250,7 +250,7 @@ def extract_tiff_metadata(file_path):
 
 if __name__ == "__main__":
     # Correct relative target file path
-    file_path = r"IHC input images\.tiff\3channel.tif"
+    file_path = r"  \file_path\... "
 
     all_images_meta = extract_tiff_metadata(file_path)
     
