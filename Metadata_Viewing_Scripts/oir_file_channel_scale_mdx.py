@@ -1,19 +1,17 @@
 import os
-import tifffile
 
+try:
+    import oirfile
+except ImportError:
+    raise ImportError("The 'oirfile' library is required. Please run '!pip install oirfile' first.")
 
-def extract_oir_metadata_via_tiff(file_path):
-    """Uses tifffile's native compound container decoding to dynamically extract
-
-    Olympus .oir dimensions, scalebars, and channel counts without hardcoded fallbacks.
-    """
+def extract_oir_metadata(file_path):
     if not os.path.exists(file_path):
         print(f"Error: Could not find the file at '{file_path}'")
         return {}
 
     image_name = os.path.basename(file_path)
 
-    # Initialize manifest target JSON template
     manifest = {
         image_name: {
             "image_index": 0,
@@ -33,117 +31,92 @@ def extract_oir_metadata_via_tiff(file_path):
     }
 
     try:
-        # Tifffile handles Olympus OIR binary block maps directly
-        with tifffile.TiffFile(file_path) as tif:
-
-            # --- A. EXTRACT DYNAMIC DIMENSIONS ---
-            # Exposes the true dimensional shape layout array (e.g., [T, Z, C, Y, X])
-            series = tif.series[0]
-            shape = series.shape
-            axes = series.axes.upper()  # Maps string axes e.g. 'TZCYX'
-            dim_map = dict(zip(axes, shape))
-
+        with oirfile.OirFile(file_path) as oir:
             manifest_core = manifest[image_name]
-            manifest_core["dimensions"]["width_pixels"] = dim_map.get("X", 0)
-            manifest_core["dimensions"]["height_pixels"] = dim_map.get("Y", 0)
-            manifest_core["dimensions"]["z_planes"] = dim_map.get("Z", 1)
-            manifest_core["dimensions"]["time_points"] = dim_map.get("T", 1)
+            
+            # --- A. EXTRACT DYNAMIC DIMENSIONS ---
+            sizes = oir.sizes
+            manifest_core["dimensions"]["width_pixels"] = sizes.get("X", 0)
+            manifest_core["dimensions"]["height_pixels"] = sizes.get("Y", 0)
+            manifest_core["dimensions"]["z_planes"] = sizes.get("Z", 1)
+            manifest_core["dimensions"]["time_points"] = sizes.get("T", 1)
 
-            # --- B. EXTRACT SPATIAL CALIBRATIONS & SCALEBAR ---
-            # Read metadata fields directly from Olympus tag blocks
-            olympus_md = getattr(tif, "olympus_metadata", None) or getattr(
-                series, "olympus_metadata", {}
-            )
+            # --- B. EXTRACT SPATIAL CALIBRATIONS ---
+            scales = oir.coord_scales
+            units = oir.coord_units
+            
+            pixel_size_x = scales.get("X")
+            pixel_size_y = scales.get("Y")
+            
+            if pixel_size_x is not None:
+                manifest_core["scalebar"]["microns_per_pixel_x"] = round(float(pixel_size_x), 5)
+            if pixel_size_y is not None:
+                manifest_core["scalebar"]["microns_per_pixel_y"] = round(float(pixel_size_y), 5)
+            
+            unit_x = units.get("X", "µm")
+            if unit_x:
+                unit_str = str(unit_x).lower()
+                if unit_str in ["micrometer", "micrometers", "um"]:
+                    manifest_core["scalebar"]["unit"] = "µm"
+                else:
+                    manifest_core["scalebar"]["unit"] = str(unit_x)
 
-            # Safely look for physical spacing maps inside the parsed metadata tree
-            pixel_size_x = None
-            pixel_size_y = None
-
-            if olympus_md:
-                # Direct metadata structure retrieval
-                try:
-                    pixel_size_x = olympus_md.get("PixelSizeX") or olympus_md.get("ResolutionX")
-                    pixel_size_y = olympus_md.get("PixelSizeY") or olympus_md.get("ResolutionY")
-                except AttributeError:
-                    pass
-
-            # Fallback calculation if physical spacing is found inside structural tags
-            if pixel_size_x is None:
-                tags = tif.pages[0].tags
-                if "XResolution" in tags:
-                    res_x = tags["XResolution"].value
-                    if res_x and res_x[0] > 0:
-                        pixel_size_x = res_x[1] / res_x[0]  # Convert resolution to pixel size
-                if "YResolution" in tags:
-                    res_y = tags["YResolution"].value
-                    if res_y and res_y[0] > 0:
-                        pixel_size_y = res_y[1] / res_y[0]
-
-            manifest_core["scalebar"]["microns_per_pixel_x"] = (
-                round(float(pixel_size_x), 5) if pixel_size_x else None
-            )
-            manifest_core["scalebar"]["microns_per_pixel_y"] = (
-                round(float(pixel_size_y), 5) if pixel_size_y else None
-            )
-
-            # --- C. CHANNEL GENERATION ---
-            num_channels = dim_map.get("C", 1)
-            default_hex_colors = [
-                "#00FF00",
-                "#FF0000",
-                "#0000FF",
-                "#00FFFF",
-                "#FF00FF",
-                "#FFFF00",
-            ]
-
-            # Re-read native dye parameters from Olympus dictionary dump if accessible
-            dye_names = []
-            if olympus_md and "Channels" in olympus_md:
-                for ch_info in olympus_md["Channels"]:
-                    if "DyeName" in ch_info:
-                        dye_names.append(ch_info["DyeName"])
-
-            for c_idx in range(num_channels):
-                ch_name = (
-                    dye_names[c_idx]
-                    if c_idx < len(dye_names)
-                    else f"Channel {c_idx + 1}"
-                )
-                manifest_core["channels"].append(
-                    {
-                        "channel_index": c_idx,
-                        "name": ch_name,
-                        "hex_color": default_hex_colors[
-                            c_idx % len(default_hex_colors)
-                        ],
-                    }
-                )
+            # --- C. CHANNEL GENERATION (TRUE HARDWARE METADATA) ---
+            actual_channel_count = sizes.get("C", 1)
+            
+            for c_idx in range(actual_channel_count):
+                ch_name = f"Channel {c_idx + 1}"
+                assigned_color = None
+                
+                if c_idx < len(oir.channels):
+                    ch = oir.channels[c_idx]
+                    
+                    # 1. Get the true channel name
+                    ch_name = getattr(ch, "name", None) or ch_name
+                    
+                    # 2. Extract the actual hardware color integer saved by Olympus
+                    raw_color = getattr(ch, "color", None)
+                    
+                    if raw_color is not None:
+                        try:
+                            if isinstance(raw_color, int):
+                                # Convert raw color integer to standard Hex, masking out the alpha channel
+                                assigned_color = f"#{raw_color & 0xFFFFFF:06X}"
+                            elif isinstance(raw_color, (tuple, list)) and len(raw_color) >= 3:
+                                # In case oirfile parses it as an RGB tuple
+                                assigned_color = f"#{int(raw_color[0]):02X}{int(raw_color[1]):02X}{int(raw_color[2]):02X}"
+                        except Exception:
+                            pass
+                
+                # 3. Absolute fallback only if the microscope saved no color data at all
+                if assigned_color is None:
+                    fallback_colors = ["#00FF00", "#FF0000", "#0000FF", "#00FFFF", "#FF00FF"]
+                    assigned_color = fallback_colors[c_idx % len(fallback_colors)]
+                
+                manifest_core["channels"].append({
+                    "channel_index": c_idx,
+                    "name": ch_name,
+                    "hex_color": assigned_color
+                })
 
     except Exception as e:
-        print(f"Failed to decode file properties using TiffFile engine: {e}")
+        print(f"Failed to decode file properties using OirFile engine: {e}")
 
     return manifest
 
 
 if __name__ == "__main__":
-    file_path = r"C:\CSE\8 th SEM (Internship)\Fluorescence-Microscopy-Analysis-App\IHC input images\.oir\1202-interval_30sec_sequence_frame_z stack.oir"
-
-    print(f"Analyzing OIR via TiffFile Pipeline: {file_path}\n" + "=" * 50)
-    all_images_meta = extract_oir_metadata_via_tiff(file_path)
+    file_path = r"  \file_path\...  "
+    
+    print(f"Analyzing OIR via oirfile Pipeline: {file_path}\n" + "=" * 50)
+    all_images_meta = extract_oir_metadata(file_path)
 
     for img_name, meta in all_images_meta.items():
         print(f"\n📸 FILE NAME: '{img_name}' (Index: {meta['image_index']})")
-        print(
-            f"  └── 📏 Size: {meta['dimensions']['width_pixels']}x{meta['dimensions']['height_pixels']} px"
-        )
+        print(f"  └── 📏 Size: {meta['dimensions']['width_pixels']}x{meta['dimensions']['height_pixels']} px")
         print(f"  └── 🎞️ Video Sequence: {meta['dimensions']['time_points']} frames")
         print(f"  └── 🧮 Z Planes: {meta['dimensions']['z_planes']} layers")
-        print(
-            f"  └── 🔬 Scale/Resolution: X: {meta['scalebar']['microns_per_pixel_x']} {meta['scalebar']['unit']}/px | Y: {meta['scalebar']['microns_per_pixel_y']} {meta['scalebar']['unit']}/px"
-        )
+        print(f"  └── 🔬 Scale/Resolution: X: {meta['scalebar']['microns_per_pixel_x']} {meta['scalebar']['unit']}/px | Y: {meta['scalebar']['microns_per_pixel_y']} {meta['scalebar']['unit']}/px")
         print(f"  └── 🎨 Channels:")
         for ch in meta['channels']:
-            print(
-                f"      • Index {ch['channel_index']}: {ch['name']} (Hex Color: {ch['hex_color']})"
-            )
+            print(f"      • Index {ch['channel_index']}: {ch['name']} (Hex Color: {ch['hex_color']})")
