@@ -15,14 +15,14 @@ class AboutUsTab(tk.Frame):
         
         # Main Info
         info_text = (
-            "This software is the creation of the Department of Biotechnology at\n"
+            "This software is the creation of the Neuroepigenitics lab (Dr. Amul J Sakharkar) Department of Biotechnology at\n"
             "Savitribai Phule Pune University (SPPU).\n\n"
-            "Developed By:\n"
-            "Aditya Subhedar (Student of MIT-WPU, Intern at SPPU)\n\n"
             "Under the Guidance of:\n"
             "• Dr. Amul J. Sakharkar (SPPU)\n"
             "• Prof. Aurnab Ghose (IISER Pune)\n"
             "• Prof. Nishikant Subhedar (IISER Pune)\n\n"
+            "Developed By:\n"
+            "Aditya Subhedar (Student of MIT-WPU, Intern at SPPU)\n\n"
             "In Collaboration with PhD and MSc Students:\n"
             "Namrata Pawar (SPPU), Vaishnavi Borade (SPPU), Maithili Borkute (SPPU), Anushka Walupante (SPPU), Unmani Harsulkar (SPPU)"
         )
