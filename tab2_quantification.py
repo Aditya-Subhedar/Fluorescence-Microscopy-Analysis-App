@@ -7,7 +7,6 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk
 import tifffile
-import czifile
 from skimage import filters, measure
 # --> Import custom widget from widgets.pyk
 from widgets import ColorRangeSlider, SingleSlider
