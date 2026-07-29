@@ -26,6 +26,52 @@ from tab5_golgi_cox_analysis import GolgiTab
 from tab6_graph_creation import GraphCreationTab
 from tab7_about_us import AboutUsTab
 
+class SplashScreen(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.overrideredirect(True) # Remove window borders
+        
+        # INCREASED WINDOW SIZE: 600x400 to give the GIF room to breathe
+        width, height = 600, 400
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        self.configure(bg="#1e272e")
+
+        # GIF Animation handling
+        self.gif_path = resource_path("loading.gif")
+        self.frames = []
+        if os.path.exists(self.gif_path):
+            try:
+                idx = 0
+                while True:
+                    self.frames.append(tk.PhotoImage(file=self.gif_path, format=f"gif -index {idx}"))
+                    idx += 1
+            except Exception:
+                pass # Reached the last frame of the GIF
+                
+        self.current_frame = 0
+        
+        # CONDITIONAL UI: If GIF exists, show GIF. If no GIF, show default title.
+        if self.frames:
+            self.gif_label = tk.Label(self, image=self.frames[0], bg="#1e272e")
+            self.gif_label.pack(expand=True)
+            self.animate_gif()
+        else:
+            self.lbl_title = tk.Label(self, text="CytoQuant", font=("Arial", 36, "bold"), bg="#1e272e", fg="#ffffff")
+            self.lbl_title.pack(expand=True)
+
+        # Always show the small loading text at the bottom
+        self.lbl_loading = tk.Label(self, text="Loading workspace modules...", font=("Arial", 10), bg="#1e272e", fg="#dcdde1")
+        self.lbl_loading.pack(side="bottom", pady=20)
+            
+    def animate_gif(self):
+        if self.frames:
+            self.current_frame = (self.current_frame + 1) % len(self.frames)
+            self.gif_label.configure(image=self.frames[self.current_frame])
+            self.after(50, self.animate_gif) # 50ms per frame
+
+
 class CytoQuantApp:
     def __init__(self, root):
         self.root = root
@@ -86,7 +132,6 @@ class CytoQuantApp:
         self.tab5 = GolgiTab(self.notebook)
         self.notebook.add(self.tab5, text="5. Golgi-Cox Analysis    ")
 
-        # Swapped instantiation to GraphCreationTab
         self.tab6 = GraphCreationTab(self.notebook)
         self.notebook.add(self.tab6, text="6. Graph Generation  ")
 
@@ -172,7 +217,6 @@ class CytoQuantApp:
                 "desc": "Perform specialized Sholl analysis for neuronal morphology. Map dendritic networks, measure branching complexity, and quantify active spine densities across concentric distances from the soma.", 
                 "color": "#c62828", "icon": "🧠", "grid": (1, 1)
             },
-            # Swapped dashboard configurations to Graph Generation
             {
                 "target_idx": 6, 
                 "title": "6. Graph Generation", 
@@ -182,26 +226,24 @@ class CytoQuantApp:
         ]
 
         # --- ANIMATED ENTRANCE CASCADE ---
+        # Stagger the tiles by 60ms each so they waterfall upwards
         for index, item in enumerate(self.modules_config):
-            self.root.after(index * 40, lambda conf=item: self.render_dashboard_tile(grid_container, conf))
+            self.root.after(index * 60, lambda conf=item: self.render_dashboard_tile(grid_container, conf))
 
     def render_dashboard_tile(self, parent, conf):
-        """Assembles an interactive module button card with a smooth Apple-style zoom-in animation."""
+        """Assembles an interactive module button card with a smooth slide-up animation."""
         row_idx, col_idx = conf["grid"]
         
         # 1. Static invisible container cell to hold the layout structure
         cell_frame = tk.Frame(parent, bg="#f8f9fa")
         cell_frame.grid(row=row_idx, column=col_idx, padx=15, pady=15, sticky="nsew")
 
-        # 2. Outer card boundary container (placed relative inside the cell)
+        # 2. Outer card boundary container
         tile_card = tk.Frame(cell_frame, bd=1, relief=tk.SOLID, bg="#ffffff", cursor="hand2")
         
-        # Start the card at 70% scale and slightly offset downwards
-        start_scale = 0.70
-        start_y_offset = 0.15 
-        start_xy = (1.0 - start_scale) / 2
-        
-        tile_card.place(relx=start_xy, rely=start_xy + start_y_offset, relwidth=start_scale, relheight=start_scale)
+        # SLIDE ANIMATION: Start the tile 400 pixels below its intended location
+        start_y_pixels = 400
+        tile_card.place(relx=0, rely=0, relwidth=1.0, relheight=1.0, y=start_y_pixels)
 
         # Decorative side accent color bar
         accent_bar = tk.Frame(tile_card, bg=conf["color"], height=4)
@@ -238,27 +280,8 @@ class CytoQuantApp:
         body.bind("<Enter>", lambda e: tile_card.config(relief=tk.RAISED, bd=2))
         body.bind("<Leave>", lambda e: tile_card.config(relief=tk.SOLID, bd=1))
 
-        # 3. Trigger the zoom animation loop
-        self.animate_zoom_in(tile_card, start_scale, start_y_offset)
-
-    def animate_zoom_in(self, widget, current_scale, current_y_offset):
-        """Creates an Apple-style ease-out spring effect expanding from the center."""
-        target_scale = 1.0
-        target_y_offset = 0.0
-        
-        # 25% ease out - provides a very snappy, premium feel
-        new_scale = current_scale + (target_scale - current_scale) * 0.25
-        new_y_offset = current_y_offset + (target_y_offset - current_y_offset) * 0.25
-        
-        # If we are almost at the target, snap it to 100% and finish
-        if (target_scale - new_scale) < 0.01:
-            widget.place(relx=0, rely=0, relwidth=1.0, relheight=1.0)
-        else:
-            # Calculate the x and y offsets to keep it perfectly centered as it grows
-            xy_offset = (1.0 - new_scale) / 2
-            widget.place(relx=xy_offset, rely=xy_offset + new_y_offset, relwidth=new_scale, relheight=new_scale)
-            # Run at ~60 FPS (16ms)
-            widget.after(16, self.animate_zoom_in, widget, new_scale, new_y_offset)
+        # 3. Trigger the slide-up animation loop
+        self.animate_slide_up(tile_card, start_y_pixels)
 
     def animate_slide_up(self, widget, current_y):
         """Creates a smooth, hardware-like ease-out deceleration effect."""
@@ -371,5 +394,20 @@ class CytoQuantApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = CytoQuantApp(root)
+    
+    # Hide the main window while the splash screen is active
+    root.withdraw()
+    splash = SplashScreen(root)
+    
+    def launch_main_app():
+        # Initialize tabs and logic in the background
+        app = CytoQuantApp(root)
+        
+        # Destroy splash screen and reveal the completed dashboard
+        splash.destroy()
+        root.deiconify() 
+        
+    # Keep the splash screen open for 2500ms (2.5 seconds) to play the GIF
+    root.after(2500, launch_main_app)
+    
     root.mainloop()
