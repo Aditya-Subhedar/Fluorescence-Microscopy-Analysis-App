@@ -575,14 +575,11 @@ class QuantificationTab(ttk.Frame):
         # 3. Lock zoom factor tightly to baseline 1.0x
         self.zoom_factor = 1.0
         
-        # 4. FIXED CENTERING: Apply explicit padding insulation subtraction to clear corner confusion
-        # This aligns the true center point of the image matrix with the viewport midpoint
-        self.pan_x = int((canvas_w - img_w) / 2.0)
-        self.pan_y = int((canvas_h - img_h) / 2.0)
-        
-        # Prevent any single-pixel clipping drifts by checking hard absolute minimum limits
-        if canvas_w <= img_w: self.pan_x = 0
-        if canvas_h <= img_h: self.pan_y = 0
+        # 4. FIXED CENTERING: 
+        # Since pan_x and pan_y function as translation offsets from the canvas center,
+        # setting them to 0 neutralizes the pan and perfectly centers the image.
+        self.pan_x = 0
+        self.pan_y = 0
         
         # Trigger layout refresh loop to draw the newly aligned frame positions
         self.fast_redraw()
