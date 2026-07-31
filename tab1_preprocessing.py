@@ -1980,6 +1980,7 @@ class PreProcessingTab(ttk.Frame):
         rgb_final[:, :, 2] = b_out.astype(np.uint8)
 
         return rgb_final
+
     def change_z_slice(self, direction):
         """Moves the Z-stack index up or down by 1 slice."""
         if self.raw_volume is None or self.is_merged_preview:
