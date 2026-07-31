@@ -44,6 +44,9 @@ class PreProcessingTab(ttk.Frame):
         # 7. Panning State: Mouse positioning caches for dragging actions
         self.pan_start_x = 0
         self.pan_start_y = 0
+
+        self.redraw_pending = False
+        self.canvas_img_id = None
         
         # 8. Image References (Prevents Tkinter garbage collection)
         self.current_pil_image = None
@@ -292,22 +295,24 @@ class PreProcessingTab(ttk.Frame):
         """Processes zooming only if Control key is held, otherwise passes event to trackpad pan."""
         # Flag that we are moving
         self.is_interacting = True
+        
         # 0x0004 represents the Control key state flag in Tkinter
         if not (event.state & 0x0004):
             # No control key? This is a normal trackpad pan gesture!
             self.on_trackpad_pan(event)
             return
+            
         # --- THE FIX: Look for the active raw matrix slice instead of the missing PIL image ---
         if not hasattr(self, 'active_raw_slice') or self.active_raw_slice is None:
             return
 
-        # Determine zoom direction step vector
+        # Determine zoom direction step vector (Boosted for better trackpad response)
         if event.num == 4:
             zoom_factor = 1.25
         elif event.num == 5:
             zoom_factor = 0.8
         elif event.delta != 0:
-            zoom_factor = 1.1 if event.delta > 0 else 0.9
+            zoom_factor = 1.25 if event.delta > 0 else 0.8
         else:
             return
 
@@ -352,13 +357,12 @@ class PreProcessingTab(ttk.Frame):
             
             self.img_scale = new_scale
             # Keep master state variables explicitly synced
-            # (Inside on_zoom...)
             self.zoom_scale = new_scale
             self.img_x = self.img_offset_x
             self.img_y = self.img_offset_y
 
         self.redraw_image() 
-        self.schedule_hq_redraw()  # <--- NEW: Start the idle timer
+        self.schedule_hq_redraw()  # <--- Start the idle timer for HQ render
 
     def reset_view_layout(self, event=None):
         """Instantly resets zoom factor and centers the image on the canvas."""
@@ -468,8 +472,6 @@ class PreProcessingTab(ttk.Frame):
         import PIL.Image
         import tkinter as tk
 
-        self.canvas.delete("all")
-
         # Keep everything explicitly tied together to support tracking dependencies
         self.zoom_scale = self.img_scale
         self.scale_x = self.img_scale
@@ -485,52 +487,56 @@ class PreProcessingTab(ttk.Frame):
             canvas_w, canvas_h = 800, 600
 
         # --- VIEWPORT CROPPING MATH ---
-        # 1. Calculate which pixels of the original image are actually visible on screen
         src_x1 = int(max(0, -self.img_offset_x / self.img_scale))
         src_y1 = int(max(0, -self.img_offset_y / self.img_scale))
         src_x2 = int(min(orig_w, (canvas_w - self.img_offset_x) / self.img_scale))
         src_y2 = int(min(orig_h, (canvas_h - self.img_offset_y) / self.img_scale))
 
-        # Guard against off-screen panning errors (prevents crashing if panned into the void)
+        # Guard against off-screen panning errors
         if src_x1 >= src_x2 or src_y1 >= src_y2:
             return 
 
-        # 2. Crop ONLY the visible region from the massive base image
         cropped_img = self.current_pil_image.crop((src_x1, src_y1, src_x2, src_y2))
 
-        # 3. Calculate how large this specific cropped region should be on the screen
         dest_w = max(1, int((src_x2 - src_x1) * self.img_scale))
         dest_h = max(1, int((src_y2 - src_y1) * self.img_scale))
 
         # --- DYNAMIC QUALITY SWITCH ---
-        # Default to NEAREST if dragging/zooming, otherwise use high-quality LANCZOS
         if getattr(self, 'is_interacting', False):
             resample_method = PIL.Image.Resampling.NEAREST
         else:
             resample_method = PIL.Image.Resampling.LANCZOS
 
-        # 4. Resize ONLY the visible cropped patch
         resized_img = cropped_img.resize((dest_w, dest_h), resample_method)
-        
-        # Saves the reference to self.tk_img to prevent canvas garbage collection bugs
         self.tk_img = PIL.ImageTk.PhotoImage(resized_img)
 
-        # 5. Calculate precise placement on the canvas
-        # If image is panned past the top/left edge, lock to 0,0. Otherwise, use positive offsets.
         dest_x = max(0, self.img_offset_x)
         dest_y = max(0, self.img_offset_y)
 
-        self.canvas.create_image(dest_x, dest_y, anchor=tk.NW, image=self.tk_img)
-        self.rect_id = None
+        # --- CANVAS RECYCLING UPGRADE (Replaces delete("all")) ---
+        # Update the existing image element instead of destroying and recreating it
+        if not hasattr(self, 'canvas_img_id') or self.canvas_img_id is None or not self.canvas.exists(self.canvas_img_id):
+            self.canvas_img_id = self.canvas.create_image(dest_x, dest_y, anchor=tk.NW, image=self.tk_img)
+        else:
+            self.canvas.coords(self.canvas_img_id, dest_x, dest_y)
+            self.canvas.itemconfig(self.canvas_img_id, image=self.tk_img)
 
-        # Redraw crop rectangle if it exists, converting image space to zoomed canvas space
+        # Update the existing rectangle element
         if hasattr(self, 'current_rect') and self.current_rect:
             x1, y1, x2, y2 = self.current_rect
             cx1 = x1 * self.img_scale + self.img_offset_x
             cy1 = y1 * self.img_scale + self.img_offset_y
             cx2 = x2 * self.img_scale + self.img_offset_x
             cy2 = y2 * self.img_scale + self.img_offset_y
-            self.rect_id = self.canvas.create_rectangle(cx1, cy1, cx2, cy2, outline="red", width=2)
+            
+            if not hasattr(self, 'rect_id') or self.rect_id is None or not self.canvas.exists(self.rect_id):
+                self.rect_id = self.canvas.create_rectangle(cx1, cy1, cx2, cy2, outline="red", width=2)
+            else:
+                self.canvas.coords(self.rect_id, cx1, cy1, cx2, cy2)
+                self.canvas.tag_raise(self.rect_id)
+        elif hasattr(self, 'rect_id') and self.rect_id is not None and self.canvas.exists(self.rect_id):
+            self.canvas.delete(self.rect_id)
+            self.rect_id = None
 
         # Render scale bar overlay layer dynamically
         if hasattr(self, 'draw_scale_bar'):
