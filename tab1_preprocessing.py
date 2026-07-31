@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import cv2
 import numpy as np
+import numexpr as ne
 import PIL
 import os
 import tifffile
@@ -49,6 +50,10 @@ class PreProcessingTab(ttk.Frame):
         # --- NEW: Time/Video Playback State ---
         self.is_playing = False
         self.play_job_id = None  # To store the 'after' loop ID for cancelling playback
+
+        # --- NEW: Z-Stack Pre-Processing Cache ---
+        self.z_processed_cache = {}
+        self.adj_cache_signature = ""
 
         # 9. UI Orchestration
         self.setup_ui()
@@ -875,6 +880,9 @@ class PreProcessingTab(ttk.Frame):
     # --- Adjustment Logic ---
     def on_slider_move(self, event=None):
         """Triggers a visual update when sliders are moved."""
+        # Clear the cache if image math parameters change
+        if hasattr(self, 'z_processed_cache'):
+            self.z_processed_cache.clear()
         self.update_preview()
 
     def toggle_merge_preview(self):
@@ -1750,7 +1758,7 @@ class PreProcessingTab(ttk.Frame):
             self.lbl_filename.config(text="Load failed")
             self.canvas.delete("all")
 
-    # --- oir playback functions ---
+    # --- playback functions ---
     def toggle_time_playback(self):
         """Toggles the playback state for time-lapse sequences."""
         # Prevent playback if no time-lapse data exists
@@ -1817,16 +1825,16 @@ class PreProcessingTab(ttk.Frame):
 
     # --- Processing ---
     def apply_image_math(self, image_multi, current_z=None):
-        """Processes contrast and brightness dynamically for N channels."""
+        """Processes contrast, brightness, and colors multi-threaded with zero RAM thrashing."""
         import numpy as np
-        
-        # --- THE FIX: Restore missing channel dimension squashed by cv2.resize ---
+        import numexpr as ne
+
+        # --- Dimensionality Check ---
         if image_multi.ndim == 2:
             image_multi = image_multi[:, :, np.newaxis]
-            
+
         h, w, c_total = image_multi.shape
-        
-        # If no Z index is provided, default to the slider's current position
+
         if current_z is None and hasattr(self, 'scale_z'):
             current_z = int(float(self.scale_z.get()))
         elif current_z is None:
@@ -1834,78 +1842,78 @@ class PreProcessingTab(ttk.Frame):
 
         var_adj = getattr(self, 'var_apply_adjustments', None)
         apply_adj = var_adj.get() if var_adj is not None else True
-        
-        # Get the names of the channels currently built in the UI
-        channel_names = list(self.channel_vars.keys())
-        processed_channels = []
 
-        # ... (keep the rest of your apply_image_math loop exactly the same) ...
+        channel_names = list(self.channel_vars.keys())
+
+        # --- THE FIX: Pre-allocate memory ONCE ---
+        # Instead of stacking arrays and thrashing RAM, we accumulate directly into R, G, B buffers.
+        r_out = np.zeros((h, w), dtype=np.float32)
+        g_out = np.zeros((h, w), dtype=np.float32)
+        b_out = np.zeros((h, w), dtype=np.float32)
+        
+        # Pre-allocate the single calculation buffer for the loop
+        norm_ch = np.empty((h, w), dtype=np.float32)
+
         for i, ch_name in enumerate(channel_names):
             if i >= c_total: 
-                processed_channels.append(np.zeros((h, w), dtype=np.float32))
                 continue
             
-            is_visible = self.channel_vars[ch_name].get()
-            contrast = self.adj_data[ch_name]["c"]
-            brightness = self.adj_data[ch_name]["b"]
+            # Completely skip invisible channels (Saves massive CPU cycles!)
+            if not self.channel_vars[ch_name].get():
+                continue 
 
-            ch_data = image_multi[:, :, i].astype(np.float32)
+            ch_data = image_multi[:, :, i] 
 
-            # --- Raw display bypass ---
-            if not apply_adj:
-                if not is_visible:
-                    processed_channels.append(np.zeros((h, w), dtype=np.float32))
+            # 1. Math Simplification (y = M*x + C)
+            if apply_adj:
+                contrast = self.adj_data[ch_name]["c"]
+                brightness = self.adj_data[ch_name]["b"]
+
+                if hasattr(self, 'z_percentiles') and current_z in self.z_percentiles and i < len(self.z_percentiles[current_z]):
+                    p_min, val_range = self.z_percentiles[current_z][i]
                 else:
-                    norm_ch = ch_data / 65535.0
-                    norm_ch = np.clip(norm_ch, 0.0, 1.0)
-                    processed_channels.append(norm_ch)
-                continue
-            
-            # --- Invisible bypass ---
-            if not is_visible:
-                processed_channels.append(np.zeros((h, w), dtype=np.float32))
-                continue
-            
-            # Pull from cache if available
-            if hasattr(self, 'z_percentiles') and current_z in self.z_percentiles and i < len(self.z_percentiles[current_z]):
-                p_min, val_range = self.z_percentiles[current_z][i]
+                    # Fallback if cache is missing (Still a slight bottleneck!)
+                    p_min, p_max = np.percentile(ch_data, (1.0, 99.9))
+                    val_range = (p_max - p_min) if (p_max - p_min) > 0 else 1.0
+
+                M = contrast / val_range
+                C = brightness - (p_min * M)
             else:
-                p_min, p_max = np.percentile(ch_data, (1.0, 99.9))
-                val_range = (p_max - p_min) if (p_max - p_min) > 0 else 1.0
-            
-            norm_ch = (ch_data - p_min) / val_range
-            norm_ch = np.clip(norm_ch, 0.0, 1.0)
-            
-            norm_ch = (norm_ch * contrast) + brightness
-            norm_ch = np.clip(norm_ch, 0.0, 1.0)
-            
-            processed_channels.append(norm_ch)
+                M = 1.0 / 65535.0
+                C = 0.0
 
-        # Pass the entire list of processed channels natively!
-        return self.apply_pseudo_colors(processed_channels)
+            # 2. Extract Color Weights
+            color = np.array(self.channel_colors[ch_name], dtype=np.float32)
+            if color.max() <= 1.0 and color.max() > 0:
+                color *= 255.0
+            r_w, g_w, b_w = color
 
-    def apply_pseudo_colors(self, processed_channels):
-        """Blends an arbitrary number of normalized arrays dynamically using UI colors."""
-        import numpy as np
-        
-        # 1. Stack the dynamic list of N channels into a single (H, W, N) matrix
-        stacked_channels = np.stack(processed_channels, axis=-1)
-        
-        # 2. Build transformation matrix directly from our dynamic color dictionary
-        channel_names = list(self.channel_vars.keys())
-        colors = [self.channel_colors[name] for name in channel_names[:len(processed_channels)]]
-        
-        color_matrix = np.array(colors, dtype=np.float32)
-        
-        if color_matrix.max() <= 1.0 and color_matrix.max() > 0:
-            color_matrix = color_matrix * 255.0
-
-        # 3. Fast matrix dot product: (H, W, N) matrix * (N, 3) color weights -> (H, W, 3) RGB Image
-        blended = np.dot(stacked_channels, color_matrix)
+            # 3. Multi-Threaded Math (Bypasses GIL, Reuses RAM)
+            # Evaluate normalization and write directly into our pre-allocated 'norm_ch' memory
+            ne.evaluate("ch_data * M + C", out=norm_ch)
             
-        # 4. Safe clip and cast to 8-bit image array
-        return np.clip(blended, 0, 255).astype(np.uint8)
+            # Clip between 0.0 and 1.0 in-place
+            ne.evaluate("where(norm_ch < 0.0, 0.0, where(norm_ch > 1.0, 1.0, norm_ch))", out=norm_ch)
 
+            # Accumulate color directly into RGB buffers in-place
+            ne.evaluate("r_out + (norm_ch * r_w)", out=r_out)
+            ne.evaluate("g_out + (norm_ch * g_w)", out=g_out)
+            ne.evaluate("b_out + (norm_ch * b_w)", out=b_out)
+
+        # 4. Final Assembly (Merge R, G, B and clip to 8-bit)
+        rgb_final = np.empty((h, w, 3), dtype=np.uint8)
+        
+        # Clip to 255 and cast directly into the final array's memory
+        ne.evaluate("where(r_out > 255.0, 255, r_out)", out=r_out)
+        rgb_final[:, :, 0] = r_out.astype(np.uint8)
+        
+        ne.evaluate("where(g_out > 255.0, 255, g_out)", out=g_out)
+        rgb_final[:, :, 1] = g_out.astype(np.uint8)
+        
+        ne.evaluate("where(b_out > 255.0, 255, b_out)", out=b_out)
+        rgb_final[:, :, 2] = b_out.astype(np.uint8)
+
+        return rgb_final
     def change_z_slice(self, direction):
         """Moves the Z-stack index up or down by 1 slice."""
         if self.raw_volume is None or self.is_merged_preview:
@@ -1932,6 +1940,36 @@ class PreProcessingTab(ttk.Frame):
             
         # Continue updating the canvas with the new Z-slice
         self.update_preview()
+
+    def _cache_adjacent_z(self, src_x1, src_y1, src_x2, src_y2, view_w, view_h):
+        """Silently processes and caches adjacent Z-stacks for smoother traversal."""
+        # EARLY EXIT: Do nothing if missing volume, in projection mode, or if it's a single Z-stack (max_z == 0)
+        if (self.raw_volume is None or 
+            getattr(self, 'is_merged_preview', False) or 
+            getattr(self, 'max_z', 0) == 0):
+            return
+            
+        current_t = getattr(self, 'current_time_point', 0)
+        
+        # Pre-process Z+1 and Z-1
+        for z_offset in [1, -1]:
+            adj_z = self.current_z_idx + z_offset
+            
+            # Ensure we are within bounds and haven't already cached it
+            if 0 <= adj_z <= self.max_z and adj_z not in self.z_processed_cache:
+                
+                # Extract raw slice safely based on dimensionality
+                if self.raw_volume.ndim == 5:
+                    raw_slice = self.raw_volume[current_t, adj_z]
+                else:
+                    raw_slice = self.raw_volume[adj_z]
+                    
+                # Downsample to viewport resolution first
+                cropped_raw = raw_slice[src_y1:src_y2, src_x1:src_x2]
+                downsampled_raw = cv2.resize(cropped_raw, (view_w, view_h), interpolation=cv2.INTER_NEAREST)
+                
+                # Apply math and save directly to cache
+                self.z_processed_cache[adj_z] = self.apply_image_math(downsampled_raw, adj_z)
 
     def update_preview(self, event=None):
         """Schedules a preview update, debouncing rapid consecutive calls to eliminate lag."""
@@ -2065,6 +2103,54 @@ class PreProcessingTab(ttk.Frame):
         # Calculate width and height of the sub-view on screen
         view_w = max(1, int((src_x2 - src_x1) * self.zoom_scale))
         view_h = max(1, int((src_y2 - src_y1) * self.zoom_scale))
+
+        # --- NEW: Z-STACK CACHE INTERCEPTION ---
+        # Generate a unique string signature for the current view state
+        adj_sig = f"{getattr(self, 'adj_data', '')}_{getattr(self, 'is_merged_preview', False)}_{getattr(self, 'current_time_point', 0)}"
+        
+        # Reset cache if the state signature changed
+        if getattr(self, 'adj_cache_signature', "") != adj_sig:
+            self.z_processed_cache = {}
+            self.adj_cache_signature = adj_sig
+            
+        cache_key = self.current_z_idx
+        
+        # Check if we already processed this Z-slice in the background
+        if not getattr(self, 'is_merged_preview', False) and cache_key in self.z_processed_cache:
+            view_image_uint8 = self.z_processed_cache[cache_key]
+        else:
+            # --- YOUR HYBRID RENDERING STRATEGY ---
+            if self.zoom_scale > 1.0:
+                # STRATEGY A (Zoomed In)
+                cropped_raw = self.active_raw_slice[src_y1:src_y2, src_x1:src_x2]
+                processed_sub_region = self.apply_image_math(cropped_raw, self.current_z_idx)
+                
+                if processed_sub_region.dtype != np.uint8:
+                    processed_sub_region = (processed_sub_region * 255.0).astype(np.uint8)
+                    
+                view_image_uint8 = cv2.resize(processed_sub_region, (view_w, view_h), interpolation=cv2.INTER_NEAREST)
+            else:
+                # STRATEGY B (Zoomed Out / Overview)
+                cropped_raw = self.active_raw_slice[src_y1:src_y2, src_x1:src_x2]
+                downsampled_raw = cv2.resize(cropped_raw, (view_w, view_h), interpolation=cv2.INTER_NEAREST)
+                
+                view_image_uint8 = self.apply_image_math(downsampled_raw, self.current_z_idx)
+                if view_image_uint8.dtype != np.uint8:
+                    view_image_uint8 = (view_image_uint8 * 255.0).astype(np.uint8)
+
+            # --- SAVE TO CACHE & KICK OFF BACKGROUND TASK ---
+            if not getattr(self, 'is_merged_preview', False):
+                self.z_processed_cache[cache_key] = view_image_uint8
+                
+                # ONLY fire background task if we actually have multiple Z-stacks
+                if getattr(self, 'max_z', 0) > 0:
+                    self.canvas.after(50, lambda: self._cache_adjacent_z(src_x1, src_y1, src_x2, src_y2, view_w, view_h))
+
+        # 2. Render processed matrix data slice to screen
+        view_pil_image = PIL.Image.fromarray(view_image_uint8)
+        self.tk_img = PIL.ImageTk.PhotoImage(view_pil_image)
+        self.canvas.create_image(dest_x, dest_y, anchor=tk.NW, image=self.tk_img)
+        self.rect_id = None
 
         # --- HYBRID RENDERING STRATEGY ---
         if self.zoom_scale > 1.0:
