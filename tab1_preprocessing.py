@@ -38,6 +38,8 @@ class PreProcessingTab(ttk.Frame):
         self.img_offset_x = 0
         self.img_offset_y = 0
         self.img_scale = 1.0  # Dynamic zoom level factor
+        self.is_interacting = False
+        self.hq_render_id = None
         
         # 7. Panning State: Mouse positioning caches for dragging actions
         self.pan_start_x = 0
@@ -288,6 +290,8 @@ class PreProcessingTab(ttk.Frame):
     def on_zoom(self, event):
         """Handles zoom gestures, preventing zooming out past full-window fit."""
         """Processes zooming only if Control key is held, otherwise passes event to trackpad pan."""
+        # Flag that we are moving
+        self.is_interacting = True
         # 0x0004 represents the Control key state flag in Tkinter
         if not (event.state & 0x0004):
             # No control key? This is a normal trackpad pan gesture!
@@ -299,9 +303,9 @@ class PreProcessingTab(ttk.Frame):
 
         # Determine zoom direction step vector
         if event.num == 4:
-            zoom_factor = 1.1
+            zoom_factor = 1.25
         elif event.num == 5:
-            zoom_factor = 0.9
+            zoom_factor = 0.8
         elif event.delta != 0:
             zoom_factor = 1.1 if event.delta > 0 else 0.9
         else:
@@ -354,6 +358,7 @@ class PreProcessingTab(ttk.Frame):
             self.img_y = self.img_offset_y
 
         self.redraw_image() 
+        self.schedule_hq_redraw()  # <--- NEW: Start the idle timer
 
     def reset_view_layout(self, event=None):
         """Instantly resets zoom factor and centers the image on the canvas."""
@@ -389,6 +394,7 @@ class PreProcessingTab(ttk.Frame):
 
     def on_pan_drag(self, event):
         """Updates image offsets dynamically during a drag movement."""
+        self.is_interacting = True
         dx = event.x - self.pan_start_x
         dy = event.y - self.pan_start_y
 
@@ -401,7 +407,8 @@ class PreProcessingTab(ttk.Frame):
         self.pan_start_x = event.x
         self.pan_start_y = event.y
 
-        self.redraw_image()  
+        self.redraw_image() 
+        self.schedule_hq_redraw()  # <--- NEW: Start the idle timer
 
     def on_pan_end(self, event):
         """Restores the standard crop crosshair cursor when right-click pan drag ends."""
@@ -411,21 +418,22 @@ class PreProcessingTab(ttk.Frame):
         """Enables native two-finger trackpad swipe-to-pan for Windows and macOS."""
         if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
             return
-
-        # Skip panning if Control modifier is active to prevent conflicting jitter
         if event.state & 0x0004:  
             return
             
-        if hasattr(event, 'delta') and event.delta != 0:
-            pan_step = 20 if event.delta > 0 else -20
+        self.is_interacting = True
             
-            # Check if Shift key is pressed (Horizontal Scroll)
+        if hasattr(event, 'delta') and event.delta != 0:
+            pan_step = 60 if event.delta > 0 else -60 # Tripled from 20 to 60
+            
+            # Add a sensitivity multiplier for smooth trackpad scrolling
+            sensitivity = 3.0 
+            
             if event.state & 0x0001:  
                 self.img_offset_x += pan_step
             else:
-                # Vertical Scroll
                 if hasattr(self, 'os_type') and self.os_type == "Darwin":
-                    self.img_offset_y += event.delta
+                    self.img_offset_y += (event.delta * sensitivity) 
                 else:
                     self.img_offset_y += pan_step
 
@@ -433,12 +441,32 @@ class PreProcessingTab(ttk.Frame):
             self.img_x = self.img_offset_x
             self.img_y = self.img_offset_y
             
-            self.redraw_image()  
+            self.redraw_image() 
+            self.schedule_hq_redraw()  # <--- NEW: Start the idle timer
+
+    def schedule_hq_redraw(self):
+        """Schedules a high-quality redraw after a brief period of inactivity."""
+        # Cancel the previous timer if the user is still actively moving
+        if hasattr(self, 'hq_render_id') and self.hq_render_id:
+            self.canvas.after_cancel(self.hq_render_id)
+        
+        # Wait 150ms after the last event to trigger the high-quality pass
+        self.hq_render_id = self.canvas.after(150, self.trigger_hq_redraw)
+
+    def trigger_hq_redraw(self):
+        """Executes the high-quality render pass."""
+        self.is_interacting = False
+        self.hq_render_id = None
+        self.redraw_image()
 
     def redraw_image(self):
-        """Resamples the base image and draws it at the active scale and offsets."""
+        """Intelligently crops and resamples only the visible viewport to maximize performance."""
         if not hasattr(self, 'current_pil_image') or self.current_pil_image is None:
             return
+
+        import PIL.ImageTk
+        import PIL.Image
+        import tkinter as tk
 
         self.canvas.delete("all")
 
@@ -448,19 +476,51 @@ class PreProcessingTab(ttk.Frame):
         self.img_x = self.img_offset_x
         self.img_y = self.img_offset_y
 
-        # Calculate new dynamic size vectors
         orig_w, orig_h = self.current_pil_image.size
-        new_w = max(1, int(orig_w * self.img_scale))
-        new_h = max(1, int(orig_h * self.img_scale))
+        
+        # Get actual canvas dimensions to determine our viewport window
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        if canvas_w < 10:  # Fallback if canvas isn't fully drawn/initialized yet
+            canvas_w, canvas_h = 800, 600
 
-        # Use NEAREST resampling for smooth, lag-free rendering during trackpad movements
-        resized_img = self.current_pil_image.resize((new_w, new_h), PIL.Image.Resampling.NEAREST)
+        # --- VIEWPORT CROPPING MATH ---
+        # 1. Calculate which pixels of the original image are actually visible on screen
+        src_x1 = int(max(0, -self.img_offset_x / self.img_scale))
+        src_y1 = int(max(0, -self.img_offset_y / self.img_scale))
+        src_x2 = int(min(orig_w, (canvas_w - self.img_offset_x) / self.img_scale))
+        src_y2 = int(min(orig_h, (canvas_h - self.img_offset_y) / self.img_scale))
+
+        # Guard against off-screen panning errors (prevents crashing if panned into the void)
+        if src_x1 >= src_x2 or src_y1 >= src_y2:
+            return 
+
+        # 2. Crop ONLY the visible region from the massive base image
+        cropped_img = self.current_pil_image.crop((src_x1, src_y1, src_x2, src_y2))
+
+        # 3. Calculate how large this specific cropped region should be on the screen
+        dest_w = max(1, int((src_x2 - src_x1) * self.img_scale))
+        dest_h = max(1, int((src_y2 - src_y1) * self.img_scale))
+
+        # --- DYNAMIC QUALITY SWITCH ---
+        # Default to NEAREST if dragging/zooming, otherwise use high-quality LANCZOS
+        if getattr(self, 'is_interacting', False):
+            resample_method = PIL.Image.Resampling.NEAREST
+        else:
+            resample_method = PIL.Image.Resampling.LANCZOS
+
+        # 4. Resize ONLY the visible cropped patch
+        resized_img = cropped_img.resize((dest_w, dest_h), resample_method)
         
         # Saves the reference to self.tk_img to prevent canvas garbage collection bugs
         self.tk_img = PIL.ImageTk.PhotoImage(resized_img)
 
-        # Place image on canvas using our dynamic offset registers
-        self.canvas.create_image(self.img_offset_x, self.img_offset_y, anchor=tk.NW, image=self.tk_img)
+        # 5. Calculate precise placement on the canvas
+        # If image is panned past the top/left edge, lock to 0,0. Otherwise, use positive offsets.
+        dest_x = max(0, self.img_offset_x)
+        dest_y = max(0, self.img_offset_y)
+
+        self.canvas.create_image(dest_x, dest_y, anchor=tk.NW, image=self.tk_img)
         self.rect_id = None
 
         # Redraw crop rectangle if it exists, converting image space to zoomed canvas space
