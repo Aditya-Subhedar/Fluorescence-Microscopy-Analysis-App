@@ -1,6 +1,7 @@
 # --- Core Image Processing & Math ---
 opencv-python==4.13.0.92
 numpy==2.2.6
+numexpr
 pillow==12.1.1
 scikit-image==0.25.2
 scipy==1.15.3
