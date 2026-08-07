@@ -10,7 +10,7 @@ class AboutUsTab(tk.Frame):
         container.place(relx=0.5, rely=0.5, anchor="center")
         
         # Header
-        lbl_header = tk.Label(container, text="About EzNeuro", font=("Arial", 22, "bold"), bg="#ffffff", fg="#2c3e50")
+        lbl_header = tk.Label(container, text="About KytoQuant", font=("Arial", 22, "bold"), bg="#ffffff", fg="#2c3e50")
         lbl_header.pack(pady=(0, 20))
         
         # Main Info
