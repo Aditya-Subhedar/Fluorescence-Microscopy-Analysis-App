@@ -4,7 +4,7 @@ try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
     
     # Force Windows Taskbar to treat KytoQuant as an independent application
-    myappid = 'KytoQuant.workspace.v1.1.0'
+    myappid = 'KytoQuant.workspace.v1.2.0'
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception:
     pass
