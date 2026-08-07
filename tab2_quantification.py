@@ -54,7 +54,7 @@ class QuantificationTab(ttk.Frame):
         self.override_mask_data = None
 
         # --- PRESET STATE VARIABLES ---
-        self.presets_file = "cytoquant_presets.json"
+        self.presets_file = "Quantification_presets.json"
         self.presets_collection = {} 
         self.pinned_presets = []
         self.current_preset = None 

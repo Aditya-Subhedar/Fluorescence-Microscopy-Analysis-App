@@ -2,6 +2,10 @@ import ctypes
 try:
     # Tells Windows to make the Tkinter app DPI-aware for crisp fonts
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    
+    # Force Windows Taskbar to treat EzNeuro as an independent application
+    myappid = 'ezneuro.workspace.v1.1.0'
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception:
     pass
 import tkinter as tk
@@ -58,7 +62,7 @@ class SplashScreen(tk.Toplevel):
             self.gif_label.pack(expand=True)
             self.animate_gif()
         else:
-            self.lbl_title = tk.Label(self, text="CytoQuant", font=("Arial", 36, "bold"), bg="#1e272e", fg="#ffffff")
+            self.lbl_title = tk.Label(self, text="EzNeuro", font=("Arial", 36, "bold"), bg="#1e272e", fg="#ffffff")
             self.lbl_title.pack(expand=True)
 
         # Always show the small loading text at the bottom
@@ -72,16 +76,19 @@ class SplashScreen(tk.Toplevel):
             self.after(50, self.animate_gif) # 50ms per frame
 
 
-class CytoQuantApp:
+class EzNeuroApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CytoQuant Version 26")
+        self.root.title("EzNeuro v1.1.0")
         self.root.state('zoomed')
 
-        # Load Icon
+        # Apply icon globally to root and all future top levels
         icon_path = resource_path("logo.ico")
         if os.path.exists(icon_path):
-            self.root.iconbitmap(icon_path)
+            try:
+                self.root.iconbitmap(default=icon_path)
+            except Exception:
+                pass
 
         # Style configurations for a clean, cohesive layout
         self.style = ttk.Style()
@@ -169,7 +176,7 @@ class CytoQuantApp:
         header_frame = tk.Frame(self.tab_home, bg="#1e272e", pady=25)
         header_frame.pack(fill=tk.X)
         
-        lbl_welcome = tk.Label(header_frame, text="CytoQuant Analysis Workspace", font=("Arial", 26, "bold"), fg="#ffffff", bg="#1e272e")
+        lbl_welcome = tk.Label(header_frame, text="EzNeuro Analysis Workspace", font=("Arial", 26, "bold"), fg="#ffffff", bg="#1e272e")
         lbl_welcome.pack()
         
         lbl_sub = tk.Label(header_frame, text="Select an automated pipeline to begin image processing and extraction workflows", font=("Arial", 11), fg="#dcdde1", bg="#1e272e")
@@ -395,19 +402,22 @@ class CytoQuantApp:
 if __name__ == "__main__":
     root = tk.Tk()
     
+    # SET ICON GLOBALLY BEFORE CREATING ANY WINDOWS
+    icon_path = resource_path("logo.ico")
+    if os.path.exists(icon_path):
+        try:
+            root.iconbitmap(default=icon_path)
+        except Exception:
+            pass
+
     # Hide the main window while the splash screen is active
     root.withdraw()
     splash = SplashScreen(root)
     
     def launch_main_app():
-        # Initialize tabs and logic in the background
-        app = CytoQuantApp(root)
-        
-        # Destroy splash screen and reveal the completed dashboard
+        app = EzNeuroApp(root)
         splash.destroy()
         root.deiconify() 
         
-    # Keep the splash screen open for 2500ms (2.5 seconds) to play the GIF
-    root.after(2500, launch_main_app)
-    
+    root.after(25, launch_main_app)
     root.mainloop()

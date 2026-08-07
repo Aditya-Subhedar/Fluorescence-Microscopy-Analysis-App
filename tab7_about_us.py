@@ -10,7 +10,7 @@ class AboutUsTab(tk.Frame):
         container.place(relx=0.5, rely=0.5, anchor="center")
         
         # Header
-        lbl_header = tk.Label(container, text="About CytoQuant", font=("Arial", 22, "bold"), bg="#ffffff", fg="#2c3e50")
+        lbl_header = tk.Label(container, text="About EzNeuro", font=("Arial", 22, "bold"), bg="#ffffff", fg="#2c3e50")
         lbl_header.pack(pady=(0, 20))
         
         # Main Info
@@ -23,8 +23,8 @@ class AboutUsTab(tk.Frame):
             "• Prof. Nishikant Subhedar (IISER Pune)\n\n"
             "Developed By:\n"
             "Aditya Subhedar (Student of MIT-WPU, Intern at SPPU)\n\n"
-            "In Collaboration with PhD and MSc Students:\n"
-            "Namrata Pawar (SPPU), Vaishnavi Borade (SPPU), Maithili Borkute (SPPU), Anushka Walupante (SPPU), Unmani Harsulkar (SPPU)"
+            "In Collaboration with PhD and MSc Biotechnology Students of SPPU:\n"
+            "Namrata Pawar, Vaishnavi Borade, Maithili Borkute, Anushka Walupante, Unmani Harsulkar"
         )
         
         lbl_info = tk.Label(container, text=info_text, font=("Arial", 11), bg="#ffffff", fg="#495057", justify=tk.CENTER)

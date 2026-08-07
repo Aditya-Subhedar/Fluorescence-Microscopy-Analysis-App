@@ -1,170 +1,174 @@
 {
     "collection": {
-        "DAPI - 10x (Nuclei)": {
+        "10x DAPI (Nuclei)": {
             "hue": [
                 100,
-                135
+                140
             ],
             "intensity": [
-                40,
+                100,
                 255
             ],
             "area": [
-                20,
-                200
+                25,
+                250
             ],
             "circularity": 65
         },
-        "GFP - 10x (Cells)": {
+        "10x Iba1 (Microglia - AF488)": {
             "hue": [
                 40,
                 85
             ],
             "intensity": [
-                30,
+                85,
                 255
             ],
             "area": [
-                50,
-                401
+                40,
+                400
             ],
-            "circularity": 15
+            "circularity": 25
         },
-        "mCherry/RFP - 10x (Cells)": {
+        "20x Iba1 (Microglia - AF488)": {
             "hue": [
+                40,
+                85
+            ],
+            "intensity": [
+                85,
+                255
+            ],
+            "area": [
                 160,
-                179
+                1600
             ],
-            "intensity": [
-                30,
-                255
-            ],
-            "area": [
-                50,
-                401
-            ],
-            "circularity": 15
+            "circularity": 25
         },
-        "FITC - 10x (Puncta)": {
+        "20x NeuN (Neuronal Soma - AF488)": {
             "hue": [
                 40,
                 85
             ],
             "intensity": [
-                120,
+                110,
                 255
             ],
             "area": [
+                300,
+                3500
+            ],
+            "circularity": 50
+        },
+        "naive red 1": {
+            "hue": [
                 0,
-                150
-            ],
-            "circularity": 60
-        },
-        "DAPI - 20x (Nuclei)": {
-            "hue": [
-                100,
-                135
-            ],
-            "intensity": [
-                40,
-                255
-            ],
-            "area": [
-                60,
-                602
-            ],
-            "circularity": 70
-        },
-        "GFP - 20x (Cells)": {
-            "hue": [
-                40,
-                85
-            ],
-            "intensity": [
-                30,
-                255
-            ],
-            "area": [
-                200,
-                1000
-            ],
-            "circularity": 15
-        },
-        "mCherry/RFP - 20x (Cells)": {
-            "hue": [
-                160,
                 179
             ],
             "intensity": [
-                30,
+                105,
                 255
             ],
             "area": [
-                200,
+                107,
                 1000
             ],
-            "circularity": 15
+            "circularity": 0
         },
-        "FITC - 20x (Puncta)": {
+        "naive green 1": {
             "hue": [
-                40,
-                85
-            ],
-            "intensity": [
-                120,
-                255
-            ],
-            "area": [
-                16,
-                200
-            ],
-            "circularity": 60
-        },
-        "a1": {
-            "hue": [
-                25,
-                76
-            ],
-            "intensity": [
-                65,
-                255
-            ],
-            "area": [
-                137,
-                1000
-            ],
-            "circularity": 21
-        },
-        "green": {
-            "hue": [
-                24,
-                92
+                0,
+                179
             ],
             "intensity": [
                 125,
                 255
             ],
             "area": [
-                107,
+                150,
                 1000
             ],
             "circularity": 0
         },
-        "red": {
+        "ncg2": {
             "hue": [
                 0,
-                26
+                179
             ],
             "intensity": [
-                153,
+                44,
                 255
             ],
             "area": [
-                107,
+                150,
                 1000
             ],
             "circularity": 0
+        },
+        "ncr": {
+            "hue": [
+                0,
+                179
+            ],
+            "intensity": [
+                139,
+                255
+            ],
+            "area": [
+                120,
+                1000
+            ],
+            "circularity": 0
+        },
+        "abc": {
+            "hue": [
+                0,
+                22
+            ],
+            "intensity": [
+                104,
+                255
+            ],
+            "area": [
+                83,
+                270
+            ],
+            "circularity": 62
+        },
+        "test": {
+            "hue": [
+                0,
+                76
+            ],
+            "intensity": [
+                127,
+                255
+            ],
+            "area": [
+                100,
+                1000
+            ],
+            "circularity": 51
+        },
+        "red": {
+            "hue": [
+                0,
+                19
+            ],
+            "intensity": [
+                121,
+                255
+            ],
+            "area": [
+                135,
+                1000
+            ],
+            "circularity": 64
         }
     },
-    "pinned": []
+    "pinned": [
+        "naive green 1",
+        "ncr",
+        "naive red 1"
+    ]
 }

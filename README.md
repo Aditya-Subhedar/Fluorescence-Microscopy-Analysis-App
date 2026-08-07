@@ -23,7 +23,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 * **Hardware Calibration Tracking:** Integrated spatial metadata extraction subsystem that decodes embedded OME-TIFF tags and native Zeiss CZI hardware XML parameters to calculate absolute fluorescent surface areas in micrometers (um2).
 * **Real-Time Fluorescence Data & UI Toggle:** Fluorescence data is displayed in real time at the bottom with fields "Fluorescent Area (%)", "Fluorescent Area (Absolute (um2))", and Cluster Count. A **toggleable ROI index** is displayed on the preview (which dynamically accounts for manual drawing/erasing) allowing users to easily hide numbers for clean visual inspection.
 * **Single-ROI Multi-Parametric Profiling:** The engine extracts granular metrics for every isolated shape, calculating individual Mean Gray Value, Integrated Density, Area Fraction, Circularity, Eccentricity, and a vectorized Nearest-Neighbor proximity matrix. 
-* **Saves Data, Presets, Contours and Overlaid Images:** Quantitative fluorescent data for a batch of multiple images is compiled into **custom multi-sheet EXCEL workbooks** (featuring a "Global Batch Overview" alongside individual image data sheets) and CSV formats. Thresholding parameters are stored in a JSON file named "cytoquant_presets.json" which can be accessed through the "apply presets" button. Contours can be saved in PNG format and superimposed on images. Images with overlaid contours (including manual drawings) can be saved in JPEG, PNG, and TIFF (un-compressed) formats.
+* **Saves Data, Presets, Contours and Overlaid Images:** Quantitative fluorescent data for a batch of multiple images is compiled into **custom multi-sheet EXCEL workbooks** (featuring a "Global Batch Overview" alongside individual image data sheets) and CSV formats. Thresholding parameters are stored in a JSON file named "Quantification_presets.json" which can be accessed through the "apply presets" button. Contours can be saved in PNG format and superimposed on images. Images with overlaid contours (including manual drawings) can be saved in JPEG, PNG, and TIFF (un-compressed) formats.
 
 ### 📍 Tab 3: Figure Layer Merger & Annotation
 * **Publication Figure Compositing:** Multi-layer alpha-channel blender that combines distinct custom-colored outline masks into a single composite asset.
@@ -49,7 +49,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 
 ### 📍 Tab 6: Automated Statistical Visualization & Graph Generation
 * **Flexible Plot Formats:** Ingests raw replicate data matrices to generate aggregated Grouped Bar charts, Box plots, or Violin plots calculating central tendencies mapped against user-selected Standard Deviation (SD) or Standard Error of the Mean (SEM) dispersion metrics.
-* **Auto Parsing of CytoQuant CSV & Excel Quantification Files (from Tab 2):** Supports direct uploading of CSV & Excel files and automated column/field parsing such as Fluoroscent area, cell count, mean intensity. Upload file directly and select groups and subgroups for the data in the file. Only supports files generated in CytoQuant format in CSV and Excel.
+* **Auto Parsing of EzNeuro CSV & Excel Quantification Files (from Tab 2):** Supports direct uploading of CSV & Excel files and automated column/field parsing such as Fluoroscent area, cell count, mean intensity. Upload file directly and select groups and subgroups for the data in the file. Only supports files generated in EzNeuro format in CSV and Excel.
 * **Replicate Dispersion Jitter:** Transparently overlays raw data points over bar charts using an adjustable, randomized Gaussian spatial jitter to prevent structural occlusion within high-density replicate clusters.
 * **Inferential Statistical Backend:** Computes automated parametric or non-parametric pairwise comparisons (Independent t-tests, Mann-Whitney U tests) and global variance profiles (One-Way ANOVA) directly within the interface against an alpha threshold (a = 0.05).
 * **Dynamic Significance Routing:** Automatically parses the maximum local data heights (y_max) to programmatically route adaptive, stacked significance brackets accented with standard academic nomenclature (*, **, ***) while applying built-in collision prevention.
@@ -105,6 +105,6 @@ python main_app.py
 To compile the application into a standalone standalone desktop application (`.exe`) within your virtual environment, run the python module execution flag command:
 
 ```bash
-python -m PyInstaller --onefile --windowed --icon=logo.ico --name="CytoQuant" --hidden-import=czifile --hidden-import=pylibCZIrw --hidden-import=tifffile --hidden-import=skimage main_app.py
+python -m PyInstaller --onefile --windowed --icon=logo.ico --add-data "logo.ico;." --name="EzNeuro" main_app.py
 ```
 The finished production package will be placed inside the generated `dist/` directory.
