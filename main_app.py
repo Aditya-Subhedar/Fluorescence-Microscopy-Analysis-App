@@ -83,7 +83,7 @@ class KytoQuantApp:
         self.root.state('zoomed')
 
         # Apply icon globally to root and all future top levels
-        icon_path = resource_path("logo.ico")
+        icon_path = resource_path("app_logo.ico")
         if os.path.exists(icon_path):
             try:
                 self.root.iconbitmap(default=icon_path)
@@ -403,7 +403,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     
     # SET ICON GLOBALLY BEFORE CREATING ANY WINDOWS
-    icon_path = resource_path("logo.ico")
+    icon_path = resource_path("app_logo.ico")
     if os.path.exists(icon_path):
         try:
             root.iconbitmap(default=icon_path)
