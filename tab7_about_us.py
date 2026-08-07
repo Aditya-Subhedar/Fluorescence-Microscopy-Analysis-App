@@ -22,7 +22,7 @@ class AboutUsTab(tk.Frame):
             "• Prof. Aurnab Ghose (IISER Pune)\n"
             "• Prof. Nishikant Subhedar (IISER Pune)\n\n"
             "Developed By:\n"
-            "Aditya Subhedar (Student of MIT-WPU, Intern at SPPU)\n\n"
+            "Aditya Subhedar (Student of MIT-WPU, Intern at Department of Biotechnology, SPPU)\n\n"
             "In Collaboration with PhD and MSc Biotechnology Students of SPPU:\n"
             "Namrata Pawar, Vaishnavi Borade, Maithili Borkute, Anushka Walupante, Unmani Harsulkar"
         )
