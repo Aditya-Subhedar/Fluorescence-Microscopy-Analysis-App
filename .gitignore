@@ -4,8 +4,6 @@ IHC input images/
 output_results/
 OFT Videos/
 
-# Excludes private branding asset
-cytoquant_presets.json
 
 # --- Python Build and Runtime Artifacts ---
 # PyInstaller output
