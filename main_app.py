@@ -3,8 +3,8 @@ try:
     # Tells Windows to make the Tkinter app DPI-aware for crisp fonts
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
     
-    # Force Windows Taskbar to treat EzNeuro as an independent application
-    myappid = 'ezneuro.workspace.v1.1.0'
+    # Force Windows Taskbar to treat KytoQuant as an independent application
+    myappid = 'KytoQuant.workspace.v1.1.0'
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception:
     pass
@@ -62,7 +62,7 @@ class SplashScreen(tk.Toplevel):
             self.gif_label.pack(expand=True)
             self.animate_gif()
         else:
-            self.lbl_title = tk.Label(self, text="EzNeuro", font=("Arial", 36, "bold"), bg="#1e272e", fg="#ffffff")
+            self.lbl_title = tk.Label(self, text="KytoQuant", font=("Arial", 36, "bold"), bg="#1e272e", fg="#ffffff")
             self.lbl_title.pack(expand=True)
 
         # Always show the small loading text at the bottom
@@ -76,10 +76,10 @@ class SplashScreen(tk.Toplevel):
             self.after(50, self.animate_gif) # 50ms per frame
 
 
-class EzNeuroApp:
+class KytoQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("EzNeuro v1.1.0")
+        self.root.title("KytoQuant v1.1.0")
         self.root.state('zoomed')
 
         # Apply icon globally to root and all future top levels
@@ -176,7 +176,7 @@ class EzNeuroApp:
         header_frame = tk.Frame(self.tab_home, bg="#1e272e", pady=25)
         header_frame.pack(fill=tk.X)
         
-        lbl_welcome = tk.Label(header_frame, text="EzNeuro Analysis Workspace", font=("Arial", 26, "bold"), fg="#ffffff", bg="#1e272e")
+        lbl_welcome = tk.Label(header_frame, text="KytoQuant Analysis Workspace", font=("Arial", 26, "bold"), fg="#ffffff", bg="#1e272e")
         lbl_welcome.pack()
         
         lbl_sub = tk.Label(header_frame, text="Select an automated pipeline to begin image processing and extraction workflows", font=("Arial", 11), fg="#dcdde1", bg="#1e272e")
@@ -415,7 +415,7 @@ if __name__ == "__main__":
     splash = SplashScreen(root)
     
     def launch_main_app():
-        app = EzNeuroApp(root)
+        app = KytoQuantApp(root)
         splash.destroy()
         root.deiconify() 
         
