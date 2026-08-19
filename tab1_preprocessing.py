@@ -2355,9 +2355,15 @@ class PreProcessingTab(ttk.Frame):
                     target_data = np.max(stack_slice, axis=0) 
                     export_z = int((z_start + z_end) // 2)
                 else:
-                    export_z = self.scale_z.get()
+                    # FIX 1: Force integer type casting so the math cache hits
+                    export_z = int(float(self.scale_z.get()))
                     target_data = self.raw_volume[export_z]
                 
+                # FIX 2: Apply the manual crop bounding box if one is drawn
+                if hasattr(self, 'current_rect') and self.current_rect:
+                    x1, y1, x2, y2 = [int(v) for v in self.current_rect]
+                    target_data = target_data[y1:y2, x1:x2]
+
                 final_rgb = self.apply_image_math(target_data, current_z=export_z)
                 final_rgb = self.stamp_scale_bar_for_export(final_rgb)
                 final_rgb = np.ascontiguousarray(final_rgb)
