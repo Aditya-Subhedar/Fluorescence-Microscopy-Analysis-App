@@ -79,7 +79,7 @@ class SplashScreen(tk.Toplevel):
 class KytoQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("KytoQuant v1.1.0")
+        self.root.title("KytoQuant v1.2.1")
         self.root.state('zoomed')
 
         # Apply icon globally to root and all future top levels
