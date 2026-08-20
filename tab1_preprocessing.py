@@ -104,8 +104,6 @@ class PreProcessingTab(ttk.Frame):
         self.btn_next_img.pack(side=tk.RIGHT)
         # ---------------------------------------
 
-        tk.Button(action_frame, text="2. Save Processed Image As...", command=self.save_image_to_disk, font=("Arial", 11, "bold"), bg="#2e7d32", fg="white").pack(fill=tk.X, pady=5)
-
         # ---------------------------------------------------------
         # Z-Navigation
         # ---------------------------------------------------------
@@ -259,6 +257,12 @@ class PreProcessingTab(ttk.Frame):
         self.combo_sb_position = ttk.Combobox(self.hidden_sb_frame, values=["Bottom Right", "Bottom Left", "Top Right", "Top Left"])
         self.combo_sb_position.set("Bottom Left")
         # ---------------------------------------------------
+
+        # --- SAVING BUTTON ---
+        tk.Button(action_frame, text="2. Save Processed Image As...", command=self.save_image_to_disk, font=("Arial", 11, "bold"), bg="#2e7d32", fg="white").pack(fill=tk.X, pady=5)
+
+        # --- QUANTIFICATION BUTTON ---
+        tk.Button(action_frame, text="3. Quantify (Send to Tab 2)", command=self.send_to_quantification, font=("Arial", 11, "bold"), bg="#d35400", fg="white").pack(fill=tk.X, pady=5)
 
         # Right Panel: Canvas
         self.canvas_frame = tk.Frame(self, bg="black")
@@ -2257,6 +2261,84 @@ class PreProcessingTab(ttk.Frame):
         # 4. Render scale bar overlay layer dynamically
         if hasattr(self, 'draw_scale_bar'):
             self.draw_scale_bar()
+
+    # --- Quantify directly ---
+    def send_to_quantification(self):
+        """Silently exports the current 2D view to a temp TIFF with metadata and routes to Tab 2."""
+        import tempfile
+        import os
+        import numpy as np
+        import tifffile
+        from tkinter import messagebox
+
+        if self.raw_volume is None:
+            messagebox.showwarning("No Image", "No image is currently loaded.", parent=self)
+            return
+
+        # 1. Get current 2D data (Handling MIP or Single Slice)
+        if self.is_merged_preview:
+            z_start = max(0, min(int(self.spin_z_start.get()), self.max_z))
+            z_end = max(0, min(int(self.spin_z_end.get()), self.max_z))
+            if z_start > z_end: z_start, z_end = z_end, z_start
+            stack_slice = self.raw_volume[z_start:z_end+1]
+            target_data = np.max(stack_slice, axis=0) 
+            export_z = int((z_start + z_end) // 2)
+        else:
+            export_z = int(float(self.scale_z.get()))
+            target_data = self.raw_volume[export_z]
+
+        # Apply manual crop bounding box if one is drawn
+        if hasattr(self, 'current_rect') and self.current_rect:
+            x1, y1, x2, y2 = [int(v) for v in self.current_rect]
+            target_data = target_data[y1:y2, x1:x2]
+
+        final_rgb = self.apply_image_math(target_data, current_z=export_z)
+        if getattr(self, 'var_show_scalebar', None) and self.var_show_scalebar.get():
+            if hasattr(self, 'stamp_scale_bar_for_export'):
+                final_rgb = self.stamp_scale_bar_for_export(final_rgb)
+        
+        final_rgb = np.ascontiguousarray(final_rgb)
+
+        # 2. Extract resolution metadata safely
+        try:
+            pixel_size_um = float(self.entry_pixel_size.get())
+        except Exception:
+            pixel_size_um = 0 
+
+        resolution_val = None
+        if pixel_size_um > 0:
+            # 10,000 um in a cm. Gives Pixels per Centimeter for TIFF standards.
+            resolution_val = 10000.0 / pixel_size_um
+
+        # 3. Save to temp file using tifffile to retain metadata
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, "kytoquant_temp_quant_export.tif")
+
+        write_kwargs = {"compression": "zlib"}
+        if resolution_val:
+            write_kwargs.update({
+                "resolution": (float(resolution_val), float(resolution_val)),
+                "resolutionunit": 3, 
+                "metadata": {'unit': 'um'}
+            })
+
+        try:
+            tifffile.imwrite(temp_path, final_rgb, **write_kwargs)
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to write temp file:\n{e}", parent=self)
+            return
+
+        # 4. Route to Tab 2
+        tab2 = self.main_app.tab2
+        if hasattr(tab2, 'load_images_from_tab1'):
+            tab2.load_images_from_tab1([temp_path])
+        else:
+            messagebox.showerror("Integration Error", "Tab 2 is missing the load_images_from_tab1 method.", parent=self)
+            return
+            
+        # 5. Switch Workspace View seamlessly
+        if hasattr(self.main_app, 'switch_to_pipeline_tab'):
+            self.main_app.switch_to_pipeline_tab(2)
 
     # --- Saving ---
     def save_image_to_disk(self):
