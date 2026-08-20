@@ -258,11 +258,14 @@ class PreProcessingTab(ttk.Frame):
         self.combo_sb_position.set("Bottom Left")
         # ---------------------------------------------------
 
-        # --- SAVING BUTTON ---
-        tk.Button(action_frame, text="2. Save Processed Image As...", command=self.save_image_to_disk, font=("Arial", 11, "bold"), bg="#2e7d32", fg="white").pack(fill=tk.X, pady=5)
-
         # --- QUANTIFICATION BUTTON ---
-        tk.Button(action_frame, text="3. Quantify (Send to Tab 2)", command=self.send_to_quantification, font=("Arial", 11, "bold"), bg="#d35400", fg="white").pack(fill=tk.X, pady=5)
+        # Changed parent from action_frame to control_frame
+        tk.Button(control_frame, text="2. Quantify (Send to Tab 2)", command=self.send_to_quantification, font=("Arial", 11, "bold"), bg="#d35400", fg="white").pack(fill=tk.X, pady=5)
+
+        # --- SAVING BUTTON ---
+        # Changed parent from action_frame to control_frame
+        tk.Button(control_frame, text="3. Save Processed Image As...", command=self.save_image_to_disk, font=("Arial", 11, "bold"), bg="#2e7d32", fg="white").pack(fill=tk.X, pady=(10, 10))
+
 
         # Right Panel: Canvas
         self.canvas_frame = tk.Frame(self, bg="black")
