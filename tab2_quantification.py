@@ -276,24 +276,62 @@ class QuantificationTab(ttk.Frame):
         self.load_current_image_data()
         self.update_nav_button_states()
 
+    def load_images_from_tab1(self, passed_files):
+        """Bridge method to receive files directly from Tab 1."""
+        if not passed_files: 
+            return
+            
+        self.image_files = sorted(list(passed_files))
+        self.current_index = 0
+        self.image_states = []
+            
+        # Clear the cache for the new file pool
+        with self.cache_lock:
+            self.image_cache.clear()
+            
+        for file_path in self.image_files:
+            self.image_states.append({
+                'file_path': file_path,
+                'hue_min': 0, 
+                'hue_max': 179,
+                'int_min': 0,
+                'int_max': 255,
+                'area_min_pos': 30,
+                'area_max_pos': 1000,
+                'manual_mask_add': None, 
+                'manual_mask_remove': None,
+                'undo_stack': [], 
+                'redo_stack': []  
+            })
+            
+        # Trigger loading the first image onto the canvas
+        self.load_current_image_data()
+        self.update_nav_button_states()
+        # -- 200ms delay before centering
+        if hasattr(self, 'canvas'):
+            self.canvas.after(200, self.reset_and_center_view)
+
     def load_current_image_data(self):
         """Loads the current selected image into the UI using high-speed look-ahead memory extraction."""
         if self.current_index >= len(self.image_files) or not self.image_states: return
-        
+
         state = self.image_states[self.current_index]
         file_path = state['file_path']
-        
+
         try:
-            # --- THE FIX: Pull from fast look-ahead RAM cache instead of slow disk operations ---
             self.original_image_rgb = self.get_image_from_cache(file_path)
-            
+
             if self.original_image_rgb is None: return
 
+            # Keep it simple, let your reset function handle it later
             self.zoom_factor = 1.0
             self.pan_x = 0
             self.pan_y = 0
-            
+
             # Grab metadata
+            self.pixel_size_um = self.get_pixel_size_um(file_path)
+
+            # Grab metadata natively
             self.pixel_size_um = self.get_pixel_size_um(file_path)
 
             if state.get('manual_mask_add') is None:
@@ -588,6 +626,34 @@ class QuantificationTab(ttk.Frame):
         """Triggers when the user double-clicks to instantly unzoom to 1.0x and center."""
         # Clean any phantom clicks or coordinates and center layout space
         self.reset_and_center_view()
+
+    def auto_fit_to_canvas(self):
+        """Calculates zoom to fit screen *after* Tkinter finishes drawing the UI layout."""
+        if not hasattr(self, 'original_image_rgb') or self.original_image_rgb is None:
+            return
+            
+        self.canvas.update_idletasks()
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        
+        # Safe fallback if UI is still lagging
+        if canvas_w < 10 or canvas_h < 10:
+            canvas_w, canvas_h = 1000, 800
+            
+        img_h, img_w = self.original_image_rgb.shape[:2]
+        scale_w = canvas_w / img_w
+        scale_h = canvas_h / img_h
+        
+        # Set zoom with a 5% margin and neutralize pan to center it
+        self.zoom_factor = min(scale_w, scale_h) * 0.95
+        self.pan_x = 0
+        self.pan_y = 0
+        
+        # Trigger your existing redraw loops
+        if hasattr(self, 'fast_redraw'):
+            self.fast_redraw()
+        elif hasattr(self, 'process_image'):
+            self.process_image()
 
     def on_trackpad_scroll_y(self, event):
         # Explicitly check for Linux scroll buttons, otherwise use Mac/Windows delta
