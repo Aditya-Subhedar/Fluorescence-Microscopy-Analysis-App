@@ -1571,132 +1571,134 @@ class PreProcessingTab(ttk.Frame):
             else:
                 import tifffile
                 import io
+                import json
                 import numpy as np
                 import xml.etree.ElementTree as ET
                 
                 with tifffile.TiffFile(file_path, is_ome=False) as tif:
                     img_raw = tif.asarray()
                     
-                    # --- 1. Extract MetaData (OME-XML or Standard Tags) ---
+                    # --- 1. Extract MetaData ---
                     microns_x = None
                     microns_y = None
                     channel_list = []
                     
-                    # Target A: OME-XML Metadata (Standard for Microscopy Tiffs)
+                    # Target A: OME-XML Metadata
                     if tif.is_ome and tif.ome_metadata:
                         try:
-                            # Strip namespaces for easier loose matching
                             it = ET.iterparse(io.StringIO(tif.ome_metadata))
-                            for _, el in it:
-                                _, _, el.tag = el.tag.rpartition('}')
+                            for _, el in it: _, _, el.tag = el.tag.rpartition('}')
                             root = it.root
                             
-                            # Extract Physical Scale
                             for pixels in root.iter('Pixels'):
                                 phys_x = pixels.get('PhysicalSizeX')
                                 phys_y = pixels.get('PhysicalSizeY')
-                                if phys_x and microns_x is None:
-                                    microns_x = float(phys_x)
-                                if phys_y and microns_y is None:
-                                    microns_y = float(phys_y)
+                                if phys_x and microns_x is None: microns_x = float(phys_x)
+                                if phys_y and microns_y is None: microns_y = float(phys_y)
                                     
-                            # Extract Channels and Colors
                             for channel in root.iter('Channel'):
                                 c_name = channel.get('Name')
-                                c_color = channel.get('Color')  # Usually signed 32-bit int in OME
+                                c_color = channel.get('Color')
                                 hex_color = "Unknown"
-                                
                                 if c_color:
                                     try:
                                         val = int(c_color)
                                         if val < 0: val = (1 << 32) + val
-                                        # Decode ARGB/RGBA to RGB hex
                                         hex_color = f"#{val & 0xFFFFFF:06X}"
-                                    except ValueError:
-                                        pass
-                                        
-                                if not c_name:
-                                    c_name = channel.get('ID', f"Channel {len(channel_list) + 1}")
-                                    
+                                    except ValueError: pass
+                                if not c_name: c_name = channel.get('ID', f"Channel {len(channel_list) + 1}")
                                 channel_list.append({"name": c_name, "hex": hex_color})
-                                
                         except Exception as meta_err:
                             print(f"Warning: OME-XML metadata parsing failed: {meta_err}")
 
-                    # Target B: Standard TIFF Tags Fallback (If no OME metadata exists)
+                    # Target B: ImageJ / ImageDescription Header Parsing
+                    # (Ignoring 'spacing' here to avoid Z-stack thickness conflicts)
                     if microns_x is None and len(tif.pages) > 0:
-                        tags = tif.pages[0].tags
-                        if 'XResolution' in tags and 'YResolution' in tags:
-                            try:
-                                x_res_val = tags['XResolution'].value
-                                y_res_val = tags['YResolution'].value
-                                res_unit = tags.get('ResolutionUnit')
-                                unit_val = res_unit.value if res_unit else 2 # Default to Inch
-                                
-                                # Tag values are typically represented as rational tuples (Numerator, Denominator)
-                                x_res = x_res_val[0] / x_res_val[1] if isinstance(x_res_val, tuple) else float(x_res_val)
-                                y_res = y_res_val[0] / y_res_val[1] if isinstance(y_res_val, tuple) else float(y_res_val)
-                                
+                        try:
+                            desc_str = str(getattr(tif.pages[0], 'description', ''))
+                            if desc_str:
+                                try:
+                                    desc_dict = json.loads(desc_str)
+                                    if 'PhysicalSizeX' in desc_dict:
+                                        microns_x = float(desc_dict['PhysicalSizeX'])
+                                        microns_y = float(desc_dict.get('PhysicalSizeY', microns_x))
+                                except Exception:
+                                    for line in desc_str.splitlines():
+                                        if '=' in line:
+                                            k, v = line.split('=', 1)
+                                            if k.strip().lower() in ['scale', 'physicalsize x']:
+                                                try: microns_x = float(v.strip())
+                                                except ValueError: pass
+                        except Exception as ij_err:
+                            print(f"Warning: ImageDescription parsing failed: {ij_err}")
+
+                    # Target C: Standard TIFF Tags (Forced to Centimeters / Microns)
+                    if microns_x is None and len(tif.pages) > 0:
+                        try:
+                            tags = tif.pages[0].tags
+                            if 'XResolution' in tags and 'YResolution' in tags:
+                                def parse_val(v):
+                                    if hasattr(v, 'numerator') and hasattr(v, 'denominator'):
+                                        return v.numerator / v.denominator if v.denominator != 0 else 0
+                                    if isinstance(v, (tuple, list)) and len(v) == 2:
+                                        return v[0] / v[1] if v[1] != 0 else 0
+                                    return float(v)
+
+                                x_res = parse_val(tags['XResolution'].value)
+                                y_res = parse_val(tags['YResolution'].value)
+
                                 if x_res > 0 and y_res > 0:
-                                    if unit_val == 3: # Centimeter
+                                    if x_res < 100:
+                                        # Assume pixels per micron directly
+                                        microns_x = 1.0 / x_res
+                                        microns_y = 1.0 / y_res
+                                    else:
+                                        # STRICT CENTIMETER OVERRIDE (Ignore all other units)
                                         microns_x = 10000.0 / x_res
                                         microns_y = 10000.0 / y_res
-                                    elif unit_val == 2: # Inch
-                                        microns_x = 25400.0 / x_res
-                                        microns_y = 25400.0 / y_res
-                            except Exception:
-                                pass
+                        except Exception as tag_err:
+                            print(f"Warning: Standard TIFF tag parsing failed: {tag_err}")
 
-                    # Bind the extracted data to the application variables
-                    if microns_x is not None:
+                    # Bind extracted pixel size
+                    if microns_x is not None and microns_x > 0:
                         self.microns_per_pixel_x = round(microns_x, 5)
                         self.microns_per_pixel_y = round(microns_y if microns_y is not None else microns_x, 5)
-                        
+                    else:
+                        print("Warning: Could not determine pixel size from TIFF metadata.")
+
                     if channel_list:
                         self._temp_extracted_channels = channel_list
 
                 # --- 2. Type Checking & Scaling ---
-                # Ensure float32 or uint16 type checking as per your pipeline
                 if img_raw.dtype == np.uint8:
-                    img_raw = img_raw.astype(np.uint16) * 257  # scale to 16-bit range roughly if needed, or keep raw
+                    img_raw = img_raw.astype(np.uint16) * 257
                 
                 # --- 3. ROBUST 4D RESHAPING FOR TIFFs ---
                 ndim = img_raw.ndim
                 shape = img_raw.shape
                 
                 if ndim == 2:
-                    # Case 1: Single 2D plane grayscale -> shape (Y, X)
                     img = img_raw[np.newaxis, :, :, np.newaxis]
-                    
                 elif ndim == 3:
-                    # Case 2: Standard RGB (Y, X, 3) or Grayscale Z-stack (Z, Y, X)
-                    if shape[2] in [3, 4]:  # Standard RGB or RGBA plane
+                    if shape[2] in [3, 4]:
                         img = img_raw[np.newaxis, :, :, :]
                     else:
                         img = img_raw[:, :, :, np.newaxis]
-                        
                 elif ndim == 4:
-                    # Case 3: Already multi-channel Z-stack -> (Z, Y, X, C) or (C, Z, Y, X)
                     if shape[3] > 20 and shape[1] <= 10:
                         img = np.transpose(img_raw, (0, 2, 3, 1))
                     elif shape[0] <= 10 and shape[3] > 20:
                         img = np.transpose(img_raw, (1, 2, 3, 0))
                     else:
                         img = img_raw
-                        
                 else:
                     img = img_raw
-                    while img.ndim < 4:
-                        img = img[:, :, :, np.newaxis]
-                    if img.ndim > 4:
-                        img = img[0, :, :, :, 0]
+                    while img.ndim < 4: img = img[:, :, :, np.newaxis]
+                    if img.ndim > 4: img = img[0, :, :, :, 0]
 
                 # --- 4. CHANNEL SWAP CORRECTION (RGB <-> BGR) ---
-                # If the image has 3 or 4 channels, swap the 1st (Red) and 3rd (Blue) channels
-                if img.shape[3] == 3:
-                    img = img[..., [2, 1, 0]]      # Swap Red (0) and Blue (2)
-                elif img.shape[3] == 4:
-                    img = img[..., [2, 1, 0, 3]]   # Swap Red & Blue, keep Alpha (3) intact
+                if img.shape[3] == 3: img = img[..., [2, 1, 0]]
+                elif img.shape[3] == 4: img = img[..., [2, 1, 0, 3]]
 
                 self.original_num_channels = img.shape[3]
 
@@ -2343,7 +2345,7 @@ class PreProcessingTab(ttk.Frame):
         if hasattr(self.main_app, 'switch_to_pipeline_tab'):
             self.main_app.switch_to_pipeline_tab(2)
 
-    # --- Saving ---
+  # --- Saving ---
     def save_image_to_disk(self):
         if self.raw_volume is None: return
         
@@ -2377,6 +2379,7 @@ class PreProcessingTab(ttk.Frame):
                 
             resolution_val = None
             if pixel_size_um > 0:
+                # Strictly Pixels Per Centimeter (1 cm = 10,000 um)
                 resolution_val = 10000.0 / pixel_size_um
 
             # ---------------------------------------------------------
@@ -2397,7 +2400,7 @@ class PreProcessingTab(ttk.Frame):
                 if resolution_val:
                     write_kwargs.update({
                         "resolution": (float(resolution_val), float(resolution_val)),
-                        "resolutionunit": 3, 
+                        "resolutionunit": 3, # 3 = Centimeter
                     })
                     
                     write_kwargs["metadata"] = {
@@ -2409,6 +2412,7 @@ class PreProcessingTab(ttk.Frame):
                     }
                     
                 write_kwargs["ome"] = True 
+                import tifffile
                 tifffile.imwrite(file_path, final_stack, **write_kwargs)
 
             # ---------------------------------------------------------
@@ -2438,19 +2442,31 @@ class PreProcessingTab(ttk.Frame):
                     write_kwargs = {"compression": "zlib"} 
                     
                     if resolution_val:
+                        import json
                         write_kwargs.update({
                             "resolution": (float(resolution_val), float(resolution_val)),
-                            "resolutionunit": 3, 
+                            "resolutionunit": 3, # 3 = Centimeter
                         })
-                        write_kwargs["metadata"] = {'unit': 'um'}
                         
+                        # FORCE PURE JSON: Instead of letting tifffile guess how to write the dict,
+                        # we explicitly dump a strict JSON string into the description tag.
+                        desc_dict = {
+                            'PhysicalSizeX': float(pixel_size_um),
+                            'PhysicalSizeY': float(pixel_size_um),
+                            'unit': 'um'
+                        }
+                        write_kwargs["description"] = json.dumps(desc_dict)
+                        
+                    import tifffile
                     tifffile.imwrite(file_path, final_rgb, **write_kwargs)
                     
                 elif file_path.lower().endswith('.png'):
+                    import cv2
                     final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
                     cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
                     
                 else:
+                    import cv2
                     final_bgr = cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR)
                     cv2.imwrite(file_path, final_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
                     
