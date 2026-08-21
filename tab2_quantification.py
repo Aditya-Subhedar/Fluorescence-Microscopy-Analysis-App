@@ -1502,14 +1502,24 @@ class QuantificationTab(ttk.Frame):
                 suffix = " (Active)" if name == self.current_preset else ""
                 self.preset_listbox.insert(tk.END, f"{prefix}{name}{suffix}")
 
-        # Bindings for Left and Right Click
-        self.preset_listbox.bind("<ButtonRelease-1>", self.on_dropdown_left_click)
-        self.preset_listbox.bind("<ButtonRelease-3>", self.on_dropdown_right_click) # Windows/Mac Right Click
-        self.preset_listbox.bind("<ButtonRelease-2>", self.on_dropdown_right_click) # Linux Right Click
+        # Replace the ButtonRelease-1 binding with ListboxSelect
+        self.preset_listbox.bind("<<ListboxSelect>>", self.on_dropdown_select)
+        self.preset_listbox.bind("<ButtonRelease-3>", self.on_dropdown_right_click)
+        self.preset_listbox.bind("<ButtonRelease-2>", self.on_dropdown_right_click)
 
-        # Close the dropdown if the user clicks anywhere else
-        self.dropdown_window.bind("<FocusOut>", lambda e: self.dropdown_window.destroy())
-        self.dropdown_window.focus_set()
+    def on_dropdown_select(self, event):
+        """Fires reliably when an item in the preset listbox is selected."""
+        selection = self.preset_listbox.curselection()
+        if not selection: return
+        
+        idx = selection[0]
+        preset_name = self.get_clean_preset_name_from_listbox(idx)
+        
+        if preset_name and preset_name in self.presets_collection:
+            self.apply_specific_preset(preset_name)
+            
+        if hasattr(self, 'dropdown_window') and self.dropdown_window.winfo_exists():
+            self.dropdown_window.destroy()
 
     def get_clean_preset_name_from_listbox(self, index):
         """Helper to strip the stars and (Active) tags from the list text."""
@@ -1552,10 +1562,21 @@ class QuantificationTab(ttk.Frame):
     def apply_specific_preset(self, preset_name):
         preset_values = self.presets_collection[preset_name]
         
+        # Dual sliders (ranges)
         self.hue_slider.set_values(*preset_values['hue'])
         self.int_slider.set_values(*preset_values['intensity'])
         self.area_slider.set_values(*preset_values['area'])
-        self.circ_slider.set_values(preset_values['circularity'])
+        
+        # Single slider (Morphology) - extract single scalar safely
+        circ_val = preset_values.get('circularity', 0)
+        if isinstance(circ_val, (list, tuple)):
+            circ_val = circ_val[0]  # Grab first number if loaded from old JSON range
+            
+        # Call single slider setter
+        if hasattr(self.circ_slider, 'set_value'):
+            self.circ_slider.set_value(circ_val)
+        elif hasattr(self.circ_slider, 'set_values'):
+            self.circ_slider.set_values(circ_val)
         
         self.current_preset = preset_name
         self.btn_apply_preset.config(text=f"Preset: {preset_name}")
@@ -1572,7 +1593,11 @@ class QuantificationTab(ttk.Frame):
         h_min, h_max = self.hue_slider.get_values()
         i_min, i_max = self.int_slider.get_values()
         a_min, a_max = self.area_slider.get_values()
-        c_val = self.circ_slider.get_values()
+        
+        # Get single float/int value from SingleSlider
+        c_val = self.circ_slider.get_value() if hasattr(self.circ_slider, 'get_value') else self.circ_slider.get_values()
+        if isinstance(c_val, (list, tuple)):
+            c_val = c_val[0]
         
         self.presets_collection[preset_name] = {
             'hue': (h_min, h_max),
@@ -1582,7 +1607,7 @@ class QuantificationTab(ttk.Frame):
         }
         self.current_preset = preset_name
         self.btn_apply_preset.config(text=f"Preset: {preset_name}")
-        self.save_presets_to_file() # <--- SAVES TO FILE
+        self.save_presets_to_file()
         messagebox.showinfo("Success", f"Preset '{preset_name}' saved successfully.", parent=self)
 
     def toggle_preset_pin(self, preset_name):
