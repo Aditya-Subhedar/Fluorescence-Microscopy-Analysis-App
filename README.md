@@ -14,7 +14,7 @@ This application provides a robust, efficient, and accurate alternative to manua
 * **Fidelity Optimization:** Adaptive hybrid rendering engine that automatically switches processing workloads to match the viewport size, delivering crystal-clear full-resolution details during deep zoom passes without lagging.
 
 ### 📍 Tab 2: Automated & Manual Quantification
-* **Automated Segmentation:** Utilizes adaptive and Otsu's method thresholding for accurately segmenting fluorescent regions. Auto detect default values can be changed according to user preferences.
+* **Automated Segmentation:** Utilizes adaptive Watershed algorithm and Otsu's method thresholding for accurately segmenting fluorescent regions. Auto detect default values can be changed according to user preferences.
 * **Interactive Filtering:** Real-time analysis sliders to filter objects by Hue Range, Intensity (Min/Max), Area Size (px), and Morphology (isolating cells and fibres).
 * **Batch Processing:** Multiple files can be loaded at once with each preserving its thresholding parameters during switching and up to 20 states for undo and redo operations. Supports .ome.tif, tiff, jpeg, jpg, png files.
 * **Pre-Fetch Caching Engine:** Powered by an asynchronous background thread pool (`ThreadPoolExecutor`) that pre-loads adjacent images into RAM, enabling instant image switching with zero file-loading lag.
