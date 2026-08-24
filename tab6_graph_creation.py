@@ -7,6 +7,9 @@ import numpy as np
 import pandas as pd
 import itertools
 import scipy.stats as stats
+from scipy.stats import linregress
+import ptitprince as pt
+import seaborn as sns
 
 # ==========================================
 # CRITICAL WINDOWS HIGH-DPI FIX
@@ -522,9 +525,17 @@ class GraphCreationTab(tk.Frame):
 
         tk.Label(frame_type, text="Chart Mode:").pack(anchor="w", padx=5)
         self.var_chart_mode = tk.StringVar(value="Grouped Bar + Scatter (Prism)")
+        # Replace the existing Combobox for var_chart_mode
         ttk.Combobox(frame_type, textvariable=self.var_chart_mode, state="readonly",
-                     values=["Grouped Bar + Scatter (Prism)", "Grouped Bar (Mean + Error Only)", 
-                             "Box Plot (Grouped)", "Violin Plot (Grouped)"]).pack(fill=tk.X, padx=5, pady=2)
+                    values=["Grouped Bar + Scatter (Prism)", 
+                            "Grouped Bar (Mean + Error Only)", 
+                            "Box Plot (Grouped)", 
+                            "Violin Plot (Grouped)",
+                            "Scatter with Regression",
+                            "Split Violin with Data",
+                            "Boxplot with Jitter",
+                            "Raincloud Plot",
+                            "Paired Slope Plot"]).pack(fill=tk.X, padx=5, pady=2)
 
         tk.Label(frame_type, text="Error Bar Metric:").pack(anchor="w", padx=5)
         self.var_error_type = tk.StringVar(value="SEM (Standard Error)")
@@ -615,213 +626,392 @@ class GraphCreationTab(tk.Frame):
             
         self.ax.clear()
         
-        df = self.parse_data_matrix()
-        if df.empty:
-            self.ax.axis('off')
-            self.ax.text(0.5, 0.5, "Data table is empty.\nEnter data or load a file to generate plot.", 
-                         ha='center', va='center', color='gray', fontsize=12)
-            self.mpl_canvas.draw()
-            return
-
-        self.ax.axis('on') 
-        categories = list(df["Category"].unique())
-        subgroups = list(df["Subgroup"].unique())
-        n_cats, n_subs = len(categories), len(subgroups)
-
         try:
-            sizes = [int(s.strip()) for s in self.var_font_sizes.get().split(',')]
-            title_sz, label_sz, tick_sz = sizes[0], sizes[1], sizes[2]
-        except Exception:
-            title_sz, label_sz, tick_sz = 14, 12, 10
-
-        colors = self.get_color_cycle(n_subs)
-        
-        hatches_raw = [h.strip() for h in self.var_hatches.get().split(',')]
-        hatches = ["" if h.lower() == "none" or not h else h for h in hatches_raw]
-        if not hatches: hatches = [""]
-        hatches_cycle = list(itertools.islice(itertools.cycle(hatches), n_subs))
-
-        markers = ['o', 's', '^', 'v', 'D', 'p', '*']
-        marker_cycle = list(itertools.islice(itertools.cycle(markers), n_subs))
-
-        bar_width = self.var_bar_width.get()
-        spacing = self.var_spacing.get()
-        jitter = self.var_jitter.get()
-        chart_mode = self.var_chart_mode.get()
-        error_mode = self.var_error_type.get()
-        r = np.arange(n_cats)
-
-        bar_positions = {}
-        bar_max_heights = {}
-        highest_data_point = 0
-
-        for i, sub in enumerate(subgroups):
-            sub_df = df[df["Subgroup"] == sub]
-            means, errors, raw_pts = [], [], []
+            df = self.parse_data_matrix()
             
-            for c_idx, cat in enumerate(categories):
-                cat_sub_vals = sub_df[sub_df["Category"] == cat]["Value"].values
-                if len(cat_sub_vals) > 0:
-                    mean_val = np.mean(cat_sub_vals)
-                    means.append(mean_val)
-                    raw_pts.append(cat_sub_vals)
-                    
-                    if error_mode == "SD (Standard Deviation)":
-                        err_val = np.std(cat_sub_vals) if len(cat_sub_vals) > 1 else 0.0
-                    elif error_mode == "SEM (Standard Error)":
-                        err_val = np.std(cat_sub_vals) / np.sqrt(len(cat_sub_vals)) if len(cat_sub_vals) > 1 else 0.0
-                    else:
-                        err_val = 0.0
-                    
-                    errors.append(err_val)
-                    highest_data_point = max(highest_data_point, mean_val + err_val, max(cat_sub_vals))
-                else:
-                    means.append(0.0)
-                    errors.append(0.0)
-                    raw_pts.append(np.array([]))
+            # --- 1. DATA VALIDATION & SANITIZATION ---
+            required_cols = {"Category", "Subgroup", "Value"}
+            if df.empty or not required_cols.issubset(df.columns):
+                self.ax.axis('off')
+                self.ax.text(0.5, 0.5, "Data table is empty or missing required columns.\nEnter data or load a file to generate plot.", 
+                             ha='center', va='center', color='gray', fontsize=12)
+                self.mpl_canvas.draw()
+                return
 
-            offset = (i - (n_subs - 1) / 2) * (bar_width + spacing)
-            x_pos = r + offset
-
-            for c_idx, cat in enumerate(categories):
-                bar_positions[(cat, sub)] = x_pos[c_idx]
-                bar_max_heights[(cat, sub)] = means[c_idx] + errors[c_idx]
-
-            if "Grouped Bar" in chart_mode:
-                self.ax.bar(x_pos, means, color=colors[i], width=bar_width, 
-                            edgecolor="black", hatch=hatches_cycle[i], linewidth=1.2, label=sub)
-                
-                if error_mode != "None":
-                    self.ax.errorbar(x_pos, means, yerr=errors, fmt='none', ecolor='black', 
-                                     capsize=4, elinewidth=1.2, capthick=1.2, zorder=4)
-                
-                if "Scatter" in chart_mode:
-                    for j, x in enumerate(x_pos):
-                        pts = raw_pts[j]
-                        if len(pts) > 0:
-                            jittered_x = np.random.normal(x, jitter, len(pts))
-                            self.ax.scatter(jittered_x, pts, marker=marker_cycle[i], s=35, 
-                                            facecolors='#333333' if colors[i].lower() != "#ffffff" else 'none', 
-                                            edgecolors='black', zorder=5, alpha=0.9)
+            # Clean NaNs, Inf values, and convert values to numeric strictly
+            df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
+            df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['Value'])
             
-            # --- FIX APPLIED HERE ---
-            elif "Box Plot" in chart_mode:
-                # Zip raw points and their specific X positions together, then filter out empty ones
-                valid_pairs = [(list(pts), x) for pts, x in zip(raw_pts, x_pos) if len(pts) > 0]
-                if valid_pairs:
-                    box_data = [p[0] for p in valid_pairs]
-                    valid_x_pos = [p[1] for p in valid_pairs]
-                    bp = self.ax.boxplot(box_data, positions=valid_x_pos, widths=bar_width, patch_artist=True, manage_ticks=False)
-                    for patch in bp['boxes']: patch.set_facecolor(colors[i])
-            
-            # --- FIX APPLIED HERE ---
-            elif "Violin Plot" in chart_mode:
-                # Zip raw points and their specific X positions together, then filter out empty ones
-                valid_pairs = [(pts, x) for pts, x in zip(raw_pts, x_pos) if len(pts) > 0]
-                if valid_pairs:
-                    violin_data = [p[0] for p in valid_pairs]
-                    valid_x_pos = [p[1] for p in valid_pairs]
-                    vp = self.ax.violinplot(violin_data, positions=valid_x_pos, widths=bar_width * 1.5, showmeans=True)
-                    for pc in vp['bodies']: pc.set_facecolor(colors[i])
+            if df.empty:
+                raise ValueError("No valid numeric data remaining after cleaning.")
 
-        stats_mode = self.var_stats_mode.get()
-        dynamic_bracket_y = highest_data_point * 1.05
-        bracket_increment = highest_data_point * 0.10
-        
-        if stats_mode != "None" and len(subgroups) > 1:
-            for cat in categories:
-                cat_df = df[df["Category"] == cat]
-                bracket_level = 0
-                
-                if stats_mode == "One-Way ANOVA (Overall)":
-                    group_data = [cat_df[cat_df["Subgroup"] == s]["Value"].values for s in subgroups]
-                    valid_groups = [g for g in group_data if len(g) > 1]
-                    if len(valid_groups) > 1:
-                        try:
-                            f_stat, p_val = stats.f_oneway(*valid_groups)
-                            sig_text = f"ANOVA p={p_val:.4f}" + (" *" if p_val <= 0.05 else "")
-                            x_center = np.mean([bar_positions[(cat, s)] for s in subgroups])
-                            y_height = max([bar_max_heights[(cat, s)] for s in subgroups]) + (highest_data_point * 0.05)
-                            self.ax.text(x_center, y_height, sig_text, ha='center', va='bottom', color='black', fontsize=label_sz)
-                            dynamic_bracket_y = max(dynamic_bracket_y, y_height + bracket_increment)
-                        except Exception: pass
+            self.ax.axis('on') 
+            categories = list(df["Category"].unique())
+            subgroups = list(df["Subgroup"].unique())
+            n_cats, n_subs = len(categories), len(subgroups)
 
-                else:
-                    pairs_to_test = []
-                    if "Compare to 1st" in stats_mode:
-                        control_sub = subgroups[0]
-                        pairs_to_test = [(control_sub, s) for s in subgroups[1:]]
-                    elif "Adjacent Pairs" in stats_mode:
-                        pairs_to_test = [(subgroups[i], subgroups[i+1]) for i in range(len(subgroups)-1)]
-                    elif "All Pairwise Combinations" in stats_mode:
-                        pairs_to_test = list(itertools.combinations(subgroups, 2))
-
-                    for (sub1, sub2) in pairs_to_test:
-                        data1 = cat_df[cat_df["Subgroup"] == sub1]["Value"].values
-                        data2 = cat_df[cat_df["Subgroup"] == sub2]["Value"].values
-                        if len(data1) < 2 or len(data2) < 2: continue
-                        
-                        try:
-                            if "Mann-Whitney" in stats_mode:
-                                stat_val, p_val = stats.mannwhitneyu(data1, data2, alternative='two-sided')
-                            else:
-                                stat_val, p_val = stats.ttest_ind(data1, data2, equal_var=False)
-
-                            sig_text = "***" if p_val <= 0.001 else "**" if p_val <= 0.01 else "*" if p_val <= 0.05 else ""
-                            
-                            if sig_text:
-                                x1, x2 = bar_positions[(cat, sub1)], bar_positions[(cat, sub2)]
-                                local_max = max(bar_max_heights[(cat, sub1)], bar_max_heights[(cat, sub2)])
-                                
-                                y_height = local_max + (highest_data_point * 0.05) + (bracket_level * bracket_increment)
-                                bracket_h = highest_data_point * 0.02
-                                
-                                self.ax.plot([x1, x1, x2, x2], [y_height-bracket_h, y_height, y_height, y_height-bracket_h], lw=1.2, c='black')
-                                self.ax.text((x1+x2)*.5, y_height, sig_text, ha='center', va='bottom', color='black', fontsize=label_sz, weight='bold')
-                                
-                                dynamic_bracket_y = max(dynamic_bracket_y, y_height + bracket_increment)
-                                bracket_level += 1
-                        except Exception:
-                            pass
-
-        self.ax.set_xticks(r)
-        self.ax.set_xticklabels(categories, fontsize=tick_sz)
-        self.ax.tick_params(axis='y', labelsize=tick_sz)
-        
-        if len(r) > 0:
-            self.ax.set_xlim(-0.5, len(r) - 0.5)
-
-        if self.var_title.get(): self.ax.set_title(self.var_title.get(), fontsize=title_sz, weight='bold', pad=12)
-        if self.var_y_title.get(): self.ax.set_ylabel(self.var_y_title.get(), fontsize=label_sz, weight='bold')
-        if self.var_x_title.get(): self.ax.set_xlabel(self.var_x_title.get(), fontsize=label_sz, weight='bold')
-
-        self.ax.spines['top'].set_visible(False)
-        self.ax.spines['right'].set_visible(False)
-        self.ax.spines['left'].set_linewidth(1.5)
-        self.ax.spines['bottom'].set_linewidth(1.5)
-
-        if self.var_y_limits.get():
+            # --- 2. FONTS, COLORS & STYLES ---
             try:
-                lim_raw = [lim.strip() for lim in self.var_y_limits.get().split(',')]
-                if len(lim_raw) == 2:
-                    self.ax.set_ylim(float(lim_raw[0]), float(lim_raw[1]))
-            except Exception: pass
-        else:
-            ymax = max(highest_data_point * 1.20, dynamic_bracket_y + (highest_data_point * 0.08))
-            if ymax <= 0 or np.isnan(ymax): ymax = 1 
-            self.ax.set_ylim(bottom=0, top=ymax)
+                sizes = [int(s.strip()) for s in self.var_font_sizes.get().split(',')]
+                title_sz, label_sz, tick_sz = sizes[0], sizes[1], sizes[2]
+            except Exception:
+                title_sz, label_sz, tick_sz = 14, 12, 10
 
-        leg_pos = self.var_legend_pos.get()
-        if leg_pos != "None":
-            handles, labels = self.ax.get_legend_handles_labels()
-            if handles:
-                if leg_pos == "outside right":
-                    self.ax.legend(handles[:n_subs], labels[:n_subs], loc="upper left", 
-                                   bbox_to_anchor=(1.03, 1.0), frameon=True, fontsize=tick_sz)
+            colors = self.get_color_cycle(n_subs)
+            
+            hatches_raw = [h.strip() for h in self.var_hatches.get().split(',')]
+            hatches = ["" if h.lower() == "none" or not h else h for h in hatches_raw]
+            if not hatches: hatches = [""]
+            hatches_cycle = list(itertools.islice(itertools.cycle(hatches), n_subs))
+
+            markers = ['o', 's', '^', 'v', 'D', 'p', '*']
+            marker_cycle = list(itertools.islice(itertools.cycle(markers), n_subs))
+
+            bar_width = self.var_bar_width.get()
+            spacing = self.var_spacing.get()
+            jitter = self.var_jitter.get()
+            chart_mode = self.var_chart_mode.get()
+            error_mode = self.var_error_type.get()
+            r = np.arange(n_cats)
+
+            def get_sig_label(p):
+                if p < 0.001: return "*** (p < 0.001)"
+                elif p < 0.01: return f"** (p = {p:.3f})"
+                elif p < 0.05: return f"* (p = {p:.3f})"
+                return f"ns (p = {p:.3f})"
+
+            # --- 3. METRICS & POSITION MAPPING ---
+            bar_positions = {}
+            bar_max_heights = {}
+            highest_data_point = df["Value"].max() if not df.empty else 1.0
+
+            for i, sub in enumerate(subgroups):
+                sub_df = df[df["Subgroup"] == sub]
+                offset = (i - (n_subs - 1) / 2) * (bar_width + spacing)
+                x_pos = r + offset
+                
+                for c_idx, cat in enumerate(categories):
+                    cat_sub_vals = sub_df[sub_df["Category"] == cat]["Value"].values
+                    bar_positions[(cat, sub)] = x_pos[c_idx]
+                    if len(cat_sub_vals) > 0:
+                        mean_val = np.mean(cat_sub_vals)
+                        if error_mode == "SD (Standard Deviation)":
+                            err = np.std(cat_sub_vals) if len(cat_sub_vals) > 1 else 0.0
+                        elif error_mode == "SEM (Standard Error)":
+                            err = np.std(cat_sub_vals) / np.sqrt(len(cat_sub_vals)) if len(cat_sub_vals) > 1 else 0.0
+                        else:
+                            err = 0.0
+                        bar_max_heights[(cat, sub)] = max(mean_val + err, np.max(cat_sub_vals))
+                    else:
+                        bar_max_heights[(cat, sub)] = 0.0
+
+            # --- 4. UNIFIED CHART RENDERER ---
+            if chart_mode in ["Grouped Bar + Scatter (Prism)", "Grouped Bar (Mean + Error Only)"]:
+                for i, sub in enumerate(subgroups):
+                    sub_df = df[df["Subgroup"] == sub]
+                    means, errors, raw_pts = [], [], []
+                    
+                    for cat in categories:
+                        cat_sub_vals = sub_df[sub_df["Category"] == cat]["Value"].values
+                        if len(cat_sub_vals) > 0:
+                            means.append(np.mean(cat_sub_vals))
+                            raw_pts.append(cat_sub_vals)
+                            if error_mode == "SD (Standard Deviation)":
+                                err_val = np.std(cat_sub_vals) if len(cat_sub_vals) > 1 else 0.0
+                            elif error_mode == "SEM (Standard Error)":
+                                err_val = np.std(cat_sub_vals) / np.sqrt(len(cat_sub_vals)) if len(cat_sub_vals) > 1 else 0.0
+                            else:
+                                err_val = 0.0
+                            errors.append(err_val)
+                        else:
+                            means.append(0.0)
+                            errors.append(0.0)
+                            raw_pts.append(np.array([]))
+
+                    offset = (i - (n_subs - 1) / 2) * (bar_width + spacing)
+                    x_pos = r + offset
+
+                    self.ax.bar(x_pos, means, color=colors[i], width=bar_width, 
+                                edgecolor="black", hatch=hatches_cycle[i], linewidth=1.2, label=sub)
+                    
+                    if error_mode != "None":
+                        self.ax.errorbar(x_pos, means, yerr=errors, fmt='none', ecolor='black', 
+                                         capsize=4, elinewidth=1.2, capthick=1.2, zorder=4)
+                    
+                    if "Scatter" in chart_mode:
+                        for j, x in enumerate(x_pos):
+                            pts = raw_pts[j]
+                            if len(pts) > 0:
+                                jittered_x = np.random.normal(x, jitter, len(pts))
+                                self.ax.scatter(jittered_x, pts, marker=marker_cycle[i], s=35, 
+                                                facecolors='#333333' if colors[i].lower() != "#ffffff" else 'none', 
+                                                edgecolors='black', zorder=5, alpha=0.9)
+
+            elif chart_mode == "Box Plot (Grouped)":
+                for i, sub in enumerate(subgroups):
+                    sub_df = df[df["Subgroup"] == sub]
+                    offset = (i - (n_subs - 1) / 2) * (bar_width + spacing)
+                    x_pos = r + offset
+                    box_data, valid_x = [], []
+                    for c_idx, cat in enumerate(categories):
+                        vals = sub_df[sub_df["Category"] == cat]["Value"].values
+                        if len(vals) > 0:
+                            box_data.append(vals)
+                            valid_x.append(x_pos[c_idx])
+                    if box_data:
+                        bp = self.ax.boxplot(box_data, positions=valid_x, widths=bar_width, patch_artist=True, manage_ticks=False)
+                        for patch in bp['boxes']: 
+                            patch.set_facecolor(colors[i])
+
+            elif chart_mode == "Violin Plot (Grouped)":
+                for i, sub in enumerate(subgroups):
+                    sub_df = df[df["Subgroup"] == sub]
+                    offset = (i - (n_subs - 1) / 2) * (bar_width + spacing)
+                    x_pos = r + offset
+                    violin_data, valid_x = [], []
+                    for c_idx, cat in enumerate(categories):
+                        vals = sub_df[sub_df["Category"] == cat]["Value"].values
+                        if len(vals) > 0:
+                            violin_data.append(vals)
+                            valid_x.append(x_pos[c_idx])
+                    if violin_data:
+                        vp = self.ax.violinplot(violin_data, positions=valid_x, widths=bar_width * 1.5, showmeans=True)
+                        for pc in vp['bodies']: 
+                            pc.set_facecolor(colors[i])
+
+            elif chart_mode == "Scatter with Regression":
+                if len(subgroups) < 2:
+                    raise ValueError("Scatter with Regression requires at least 2 subgroups to plot multi-series trajectories.")
+                
+                df_temp = df.copy()
+                
+                # 1. Clean data: Parse numbers dynamically from 'Category'
+                if df_temp['Category'].dtype == object:
+                    # Extract numbers; [0] grabs the first column of the resulting DataFrame
+                    extracted = df_temp['Category'].astype(str).str.extract(r'([0-9]*\.?[0-9]+)')[0]
+                    
+                    if extracted.isna().all():
+                        # FALLBACK: If no numbers exist (e.g., category is just text), map unique text to 0, 1, 2...
+                        df_temp['Category_num'] = df_temp['Category'].astype('category').cat.codes.astype(float)
+                    else:
+                        df_temp['Category_num'] = extracted.astype(float)
                 else:
-                    self.ax.legend(handles[:n_subs], labels[:n_subs], loc=leg_pos, frameon=True, fontsize=tick_sz)
+                    df_temp['Category_num'] = df_temp['Category'].astype(float)
+                
+                # 2. Iterate dynamically over subgroups and ASSIGN COLORS
+                for i, sub in enumerate(subgroups):
+                    sub_data = df_temp[df_temp['Subgroup'] == sub]
+                    if len(sub_data) > 1:
+                        sns.regplot(
+                            x='Category_num', 
+                            y='Value', 
+                            data=sub_data, 
+                            ax=self.ax, 
+                            label=str(sub),
+                            color=colors[i % len(colors)],  # <-- Fix: Assigns distinct colors from your UI palette
+                            scatter_kws={'alpha': 0.6, 's': 35},
+                            line_kws={'linewidth': 2}
+                        )
+                
+                # 3. Dynamic Axis Titles linked straight to your UI inputs
+                x_lbl = self.var_x_title.get().strip() if self.var_x_title.get().strip() else 'Category'
+                y_lbl = self.var_y_title.get().strip() if self.var_y_title.get().strip() else 'Value'
+                self.ax.set_xlabel(x_lbl, fontsize=label_sz, weight='bold')
+                self.ax.set_ylabel(y_lbl, fontsize=label_sz, weight='bold')
+                
+                # 4. Generate dynamic statistical label (ANCOVA tracking slope differences)
+                try:
+                    import statsmodels.api as sm
+                    from statsmodels.formula.api import ols
+                    
+                    # <-- Fix: Rename columns temporarily to guarantee Patsy doesn't crash on special characters
+                    df_stats = df_temp.rename(columns={'Value': 'Val', 'Subgroup': 'Grp', 'Category_num': 'CatNum'})
+                    
+                    # Compute a clean two-way interaction (ANCOVA) model dynamically
+                    model = ols('Val ~ C(Grp) * CatNum', data=df_stats).fit()
+                    anova_table = sm.stats.anova_lm(model, typ=2)
+                    
+                    # Extract interaction p-value
+                    p_interaction = anova_table.loc['C(Grp):CatNum', 'PR(>F)']
+                    stats_str = f"ANCOVA Slope Diff:\n{get_sig_label(p_interaction)}"
+                    
+                    self.ax.text(0.95, 0.05, stats_str, transform=self.ax.transAxes,
+                                fontsize=label_sz - 1, ha='right', va='bottom',
+                                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.85))
+                except Exception as e:
+                    # It's good practice to print the error to the terminal so you know WHY it failed
+                    print(f"ANCOVA Stats Error: {e}") 
+                    pass
+                
+                # 5. Display Legend using your dataset's exact Subgroup names
+                self.ax.legend(fontsize=label_sz - 1, loc='upper left')
 
-        self.apply_layout_transform()
+            elif chart_mode == "Split Violin with Data":
+                is_split = len(subgroups) == 2
+                sns.violinplot(data=df, x="Category", y="Value", hue="Subgroup", split=is_split, inner=None, ax=self.ax, alpha=0.4, palette=colors[:n_subs])
+                sns.stripplot(data=df, x="Category", y="Value", hue="Subgroup", dodge=True, ax=self.ax, alpha=0.7, palette='dark:k', legend=False)
+
+            elif chart_mode == "Boxplot with Jitter":
+                sns.boxplot(data=df, x="Category", y="Value", hue="Subgroup", ax=self.ax, showfliers=False, boxprops={'alpha': 0.6}, palette=colors[:n_subs])
+                sns.stripplot(data=df, x="Category", y="Value", hue="Subgroup", dodge=True, ax=self.ax, alpha=0.7, palette='dark:k', legend=False)
+
+            elif chart_mode == "Raincloud Plot":
+                # 1. Map 'Subgroup' to both x and hue for side-by-side, colored lanes
+                # 2. Add orient='v' to ensure vertical plotting
+                # 3. Add legend=False to prevent the FutureWarning and duplicate legends
+                pt.RainCloud(
+                    data=df, 
+                    x="Subgroup", 
+                    y="Value", 
+                    hue="Subgroup", 
+                    ax=self.ax, 
+                    palette=colors[:n_subs], 
+                    bw=0.2, 
+                    width_viol=0.6, 
+                    offset=0.15,
+                    orient="v",
+                )
+
+            elif chart_mode == "Paired Slope Plot":
+                df_pair = df.copy()
+                df_pair['subject_id'] = df_pair.groupby(['Category', 'Subgroup']).cumcount()
+                sns.pointplot(data=df_pair, x="Subgroup", y="Value", hue="subject_id", markers="o", ax=self.ax, alpha=0.6, markersize=6, linewidth=1.5)
+                if self.ax.get_legend(): self.ax.get_legend().remove()
+                if len(subgroups) == 2:
+                    piv = df_pair.pivot(index=['Category', 'subject_id'], columns='Subgroup', values='Value').dropna()
+                    if len(piv) > 1 and subgroups[0] in piv.columns and subgroups[1] in piv.columns:
+                        d1, d2 = piv[subgroups[0]], piv[subgroups[1]]
+                        if np.var(d1) > 0 or np.var(d2) > 0:
+                            _, p_val = stats.ttest_rel(d1, d2)
+                            self.ax.text(0.5, 0.93, f"Paired t-test: {get_sig_label(p_val)}", 
+                                         transform=self.ax.transAxes, ha='center', fontsize=label_sz - 1, 
+                                         bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.85))
+
+            # --- 5. AUTOMATED STATISTICAL TESTING ---
+            stats_mode = self.var_stats_mode.get()
+            dynamic_bracket_y = highest_data_point * 1.05
+            bracket_increment = highest_data_point * 0.10
+
+            if stats_mode != "None" and len(subgroups) > 1 and chart_mode not in ["Scatter with Regression", "Paired Slope Plot"]:
+                for cat in categories:
+                    cat_df = df[df["Category"] == cat]
+                    bracket_level = 0
+                    
+                    if stats_mode == "One-Way ANOVA (Overall)":
+                        group_data = [cat_df[cat_df["Subgroup"] == s]["Value"].values for s in subgroups]
+                        valid_groups = [g for g in group_data if len(g) >= 2 and np.var(g) > 0]
+                        if len(valid_groups) > 1:
+                            try:
+                                f_stat, p_val = stats.f_oneway(*valid_groups)
+                                sig_text = f"ANOVA p={p_val:.4f}" + (" *" if p_val <= 0.05 else "ns")
+                                x_center = np.mean([bar_positions[(cat, s)] for s in subgroups])
+                                y_height = max([bar_max_heights[(cat, s)] for s in subgroups]) + (highest_data_point * 0.05)
+                                self.ax.text(x_center, y_height, sig_text, ha='center', va='bottom', color='black', fontsize=label_sz)
+                                dynamic_bracket_y = max(dynamic_bracket_y, y_height + bracket_increment)
+                            except Exception: 
+                                pass
+
+                    else:
+                        pairs_to_test = []
+                        if "Compare to 1st" in stats_mode:
+                            control_sub = subgroups[0]
+                            pairs_to_test = [(control_sub, s) for s in subgroups[1:]]
+                        elif "Adjacent Pairs" in stats_mode:
+                            pairs_to_test = [(subgroups[i], subgroups[i+1]) for i in range(len(subgroups)-1)]
+                        elif "All Pairwise Combinations" in stats_mode:
+                            pairs_to_test = list(itertools.combinations(subgroups, 2))
+
+                        for (sub1, sub2) in pairs_to_test:
+                            data1 = cat_df[cat_df["Subgroup"] == sub1]["Value"].values
+                            data2 = cat_df[cat_df["Subgroup"] == sub2]["Value"].values
+                            
+                            # Protect against zero-variance and insufficient sample sizes
+                            if len(data1) < 2 or len(data2) < 2: continue
+                            if np.var(data1) == 0 and np.var(data2) == 0: continue
+                            
+                            try:
+                                if "Mann-Whitney" in stats_mode:
+                                    stat_val, p_val = stats.mannwhitneyu(data1, data2, alternative='two-sided')
+                                else:
+                                    stat_val, p_val = stats.ttest_ind(data1, data2, equal_var=False)
+
+                                sig_text = "***" if p_val <= 0.001 else "**" if p_val <= 0.01 else "*" if p_val <= 0.05 else ""
+                                
+                                if sig_text:
+                                    x1, x2 = bar_positions[(cat, sub1)], bar_positions[(cat, sub2)]
+                                    local_max = max(bar_max_heights[(cat, sub1)], bar_max_heights[(cat, sub2)])
+                                    
+                                    y_height = local_max + (highest_data_point * 0.05) + (bracket_level * bracket_increment)
+                                    bracket_h = highest_data_point * 0.02
+                                    
+                                    self.ax.plot([x1, x1, x2, x2], [y_height-bracket_h, y_height, y_height, y_height-bracket_h], lw=1.2, c='black')
+                                    self.ax.text((x1+x2)*.5, y_height, sig_text, ha='center', va='bottom', color='black', fontsize=label_sz, weight='bold')
+                                    
+                                    dynamic_bracket_y = max(dynamic_bracket_y, y_height + bracket_increment)
+                                    bracket_level += 1
+                            except Exception:
+                                pass
+
+            # --- 6. UNIFIED AXES & SPINES SETUP ---
+            if chart_mode not in ["Scatter with Regression", "Paired Slope Plot"]:
+                self.ax.set_xticks(r)
+                self.ax.set_xticklabels(categories, fontsize=tick_sz)
+                if len(r) > 0:
+                    self.ax.set_xlim(-0.5, len(r) - 0.5)
+
+            self.ax.tick_params(axis='y', labelsize=tick_sz)
+            
+            if self.var_title.get().strip(): 
+                self.ax.set_title(self.var_title.get(), fontsize=title_sz, weight='bold', pad=12)
+            if self.var_y_title.get().strip(): 
+                self.ax.set_ylabel(self.var_y_title.get(), fontsize=label_sz, weight='bold')
+            if self.var_x_title.get().strip(): 
+                self.ax.set_xlabel(self.var_x_title.get(), fontsize=label_sz, weight='bold')
+
+            self.ax.spines['top'].set_visible(False)
+            self.ax.spines['right'].set_visible(False)
+            self.ax.spines['left'].set_linewidth(1.5)
+            self.ax.spines['bottom'].set_linewidth(1.5)
+
+            # Axis limit logic
+            if self.var_y_limits.get():
+                try:
+                    lim_raw = [lim.strip() for lim in self.var_y_limits.get().split(',')]
+                    if len(lim_raw) == 2:
+                        self.ax.set_ylim(float(lim_raw[0]), float(lim_raw[1]))
+                except Exception: pass
+            elif chart_mode not in ["Scatter with Regression"]:
+                ymax = max(highest_data_point * 1.20, dynamic_bracket_y + (highest_data_point * 0.08))
+                if ymax <= 0 or np.isnan(ymax): ymax = 1 
+                self.ax.set_ylim(bottom=0, top=ymax)
+
+            # --- 7. UNIFIED LEGEND CLEANUP ---
+            leg_pos = self.var_legend_pos.get()
+            if leg_pos != "None":
+                handles, labels = self.ax.get_legend_handles_labels()
+                if handles:
+                    # Clean duplicate legend keys (e.g. Seaborn strip + boxplot combinations)
+                    by_label = dict(zip(labels, handles))
+                    unique_labels = [sg for sg in subgroups if sg in by_label]
+                    if unique_labels:
+                        h_list, l_list = [by_label[l] for l in unique_labels], unique_labels
+                    else:
+                        h_list, l_list = handles[:n_subs], labels[:n_subs]
+
+                    if leg_pos == "outside right":
+                        self.ax.legend(h_list, l_list, loc="upper left", 
+                                       bbox_to_anchor=(1.03, 1.0), frameon=True, fontsize=tick_sz)
+                    else:
+                        self.ax.legend(h_list, l_list, loc=leg_pos, frameon=True, fontsize=tick_sz)
+
+            self.apply_layout_transform()
+
+        except Exception as e:
+            self.ax.clear()
+            self.ax.axis('off')
+            self.ax.text(0.5, 0.5, f"⚠️ Error Generating Plot:\n{str(e)}", 
+                         ha='center', va='center', color='red', fontsize=11, wrap=True)
+            self.mpl_canvas.draw()
 
     def export_plot(self):
         file_path = filedialog.asksaveasfilename(
