@@ -8,6 +8,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk
 import tifffile
 from skimage import filters, measure
+from skimage.feature import peak_local_max
 # --> Import custom widget from widgets.pyk
 from widgets import ColorRangeSlider, SingleSlider
 from tkinter import colorchooser
@@ -745,6 +746,340 @@ class QuantificationTab(ttk.Frame):
         
         # Trigger the visual update
         self.process_image()
+
+        def process_image(self):
+            if self.cached_hsv is None or not self.image_states: return
+            self.is_processing = True
+            
+            state = self.image_states[self.current_index]
+            file_meta = f"Image {self.current_index + 1} of {len(self.image_states)} | {state['file_path']}"
+            
+            overlay_rgb = self.original_image_rgb.copy()
+            total_pixels = self.cached_gray.shape[0] * self.cached_gray.shape[1]
+            
+            # --- AREA THRESHOLDS (MIN / MAX BOUNDS) ---
+            slider_min = state.get('area_min_pos', 0)
+            slider_max = state.get('area_max_pos', 1000)
+            
+            min_area_val = int(((slider_min / 1000.0) ** 4) * total_pixels) 
+            max_area_val = int(((slider_max / 1000.0) ** 4) * total_pixels)
+            
+            state['min_area_actual'] = min_area_val
+            state['max_area_actual'] = max_area_val
+
+            contours_drawn_manually = False
+            
+            # -----------------------------------------------------------------
+            # ---> CASE 1: MASK OVERRIDE <---
+            # -----------------------------------------------------------------
+            if getattr(self, 'mask_override_mode', False) and getattr(self, 'override_mask_data', None) is not None:
+                mask_base = self.override_mask_data.copy()
+                
+                if hasattr(self, 'current_manual_add') and self.current_manual_add is not None and self.current_manual_add.shape == mask_base.shape:
+                    mask_base = cv2.bitwise_or(mask_base, self.current_manual_add)
+                    
+                if getattr(self, 'eraser_permanent_mask', None) is not None and self.eraser_permanent_mask.shape == mask_base.shape:
+                    mask_base = cv2.bitwise_and(mask_base, cv2.bitwise_not(self.eraser_permanent_mask))
+                    
+                if hasattr(self, 'current_manual_remove') and self.current_manual_remove is not None and self.current_manual_remove.shape == mask_base.shape:
+                    mask_base = cv2.bitwise_and(mask_base, cv2.bitwise_not(self.current_manual_remove))
+                    
+                self.current_mask = mask_base.copy()
+                
+                contours, _ = cv2.findContours(mask_base, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay_rgb, contours, -1, (255, 255, 255), 2)
+                contours_drawn_manually = True
+                
+                stats_meta = "Mask View Mode: Raw Image Pipeline Suspended"
+                self.lbl_stats_integrated.config(text=f"{file_meta}\n{stats_meta}")
+            
+            # -----------------------------------------------------------------
+            # ---> CASE 2: ALGORITHMIC AUTO-DETECTION <---
+            # -----------------------------------------------------------------
+            elif self.auto_detect_enabled:
+                # --- HUE & INTENSITY THRESHOLDS (MIN / MAX BOUNDS) ---
+                h_min, h_max = state.get('hue_min', 0), state.get('hue_max', 179)
+                v_min = state.get('int_min', 0)
+                v_max = state.get('int_max', 255)
+                
+                is_grayscale = False
+                if len(self.original_image_rgb.shape) == 2:
+                    is_grayscale = True
+                elif len(self.original_image_rgb.shape) == 3:
+                    if np.array_equal(self.original_image_rgb[:, :, 0], self.original_image_rgb[:, :, 1]) and \
+                       np.array_equal(self.original_image_rgb[:, :, 1], self.original_image_rgb[:, :, 2]):
+                        is_grayscale = True
+                
+                if is_grayscale:
+                    lower_bound = np.array([0, 0, v_min])
+                    upper_bound = np.array([179, 255, v_max])
+                else:
+                    lower_bound = np.array([h_min, 30, v_min]) 
+                    upper_bound = np.array([h_max, 255, v_max])
+                
+                # Filter pixels strictly within user min/max threshold bounds
+                mask_filtered = cv2.inRange(self.cached_hsv, lower_bound, upper_bound)
+                
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                mask_clean = cv2.morphologyEx(mask_filtered, cv2.MORPH_OPEN, kernel)
+                mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
+                
+                circ_val = state.get('circ_min', 0)
+                if circ_val != 0:
+                    k_size = int((abs(circ_val) / 100.0) * 20) * 2 + 1 
+                    if k_size > 1:
+                        dynamic_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+                        if circ_val > 0:
+                            mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_OPEN, dynamic_kernel)
+                        else:
+                            mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_TOPHAT, dynamic_kernel)
+                
+                mask_visual_uint8 = np.uint8(mask_clean)
+                
+                # --- Filter by Min/Max Area and Eccentricity ---
+                valid_labels = []
+                for r in logic_regions:
+                    if r.area >= min_area_val:
+                        if circ_val < 0:
+                            # FIBRE MODE: Accept all connected ridge networks.
+                            # Crossing/branching fibers have mathematically low global eccentricity,
+                            # so we completely bypass the shape and max-area checks here.
+                            valid_labels.append(r.label)
+                else:
+                    # CELL MODE: Distance Transform + Watershed on user-thresholded mask
+                    if cv2.countNonZero(mask_visual_uint8) > 0:
+                        sure_bg = cv2.dilate(mask_visual_uint8, kernel, iterations=2)
+                        dist_transform = cv2.distanceTransform(mask_visual_uint8, cv2.DIST_L2, 5)
+                        
+                        dist_max = dist_transform.max()
+                        if dist_max > 0:
+                            _, sure_fg = cv2.threshold(dist_transform, 0.2 * dist_max, 255, 0)
+                            sure_fg = np.uint8(sure_fg)
+                            unknown = cv2.subtract(sure_bg, sure_fg)
+
+                            _, markers = cv2.connectedComponents(sure_fg)
+                            markers = markers + 1
+                            markers[unknown == 255] = 0
+
+                            rgb_for_ws = self.original_image_rgb.copy()
+                            if len(rgb_for_ws.shape) == 2:
+                                rgb_for_ws = cv2.cvtColor(rgb_for_ws, cv2.COLOR_GRAY2BGR)
+                            
+                            markers = cv2.watershed(np.uint8(rgb_for_ws), markers)
+                            
+                            mask_logic_uint8 = np.zeros_like(mask_visual_uint8)
+                            mask_logic_uint8[markers > 1] = 255
+                            
+                            if cv2.countNonZero(mask_logic_uint8) == 0:
+                                mask_logic_uint8 = mask_visual_uint8.copy()
+                        else:
+                            mask_logic_uint8 = mask_visual_uint8.copy()
+                    else:
+                        mask_logic_uint8 = mask_visual_uint8.copy()
+                    
+                    ecc_threshold = 0.0
+                
+                # --- SHAPE-SAFE MASK INITIALIZATION & MANUAL TOOL COMBINATION ---
+                if (not hasattr(self, 'eraser_permanent_mask') or 
+                    self.eraser_permanent_mask is None or 
+                    self.eraser_permanent_mask.shape != mask_visual_uint8.shape):
+                    self.eraser_permanent_mask = np.zeros_like(mask_visual_uint8)
+                
+                if (hasattr(self, 'current_manual_add') and 
+                    self.current_manual_add is not None and 
+                    self.current_manual_add.shape == mask_visual_uint8.shape):
+                    manual_add_filled = self.current_manual_add.copy()
+                else:
+                    manual_add_filled = np.zeros_like(mask_visual_uint8)
+                    
+                if np.max(manual_add_filled) > 0:
+                    cnts_add, _ = cv2.findContours(manual_add_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(manual_add_filled, cnts_add, -1, 255, -1)
+                    
+                if (hasattr(self, 'current_manual_remove') and 
+                    self.current_manual_remove is not None and 
+                    self.current_manual_remove.shape == mask_visual_uint8.shape):
+                    manual_remove_filled = self.current_manual_remove.copy()
+                else:
+                    manual_remove_filled = np.zeros_like(mask_visual_uint8)
+                    
+                if np.max(manual_remove_filled) > 0:
+                    cnts_rem, _ = cv2.findContours(manual_remove_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(manual_remove_filled, cnts_rem, -1, 255, -1)
+                
+                mask_combined_logic = cv2.bitwise_or(mask_logic_uint8, manual_add_filled)
+                mask_combined_logic = cv2.bitwise_and(mask_combined_logic, cv2.bitwise_not(self.eraser_permanent_mask))
+                mask_combined_logic = cv2.bitwise_and(mask_combined_logic, cv2.bitwise_not(manual_remove_filled))
+                
+                labeled_logic, _ = measure.label(mask_combined_logic > 0, return_num=True)
+                logic_regions = measure.regionprops(labeled_logic)
+
+                # Filter by Min/Max Area Thresholds
+                valid_labels = []
+                for r in logic_regions:
+                    if circ_val < 0:
+                        # FIBRE MODE: Allow fibers to branch and merge infinitely
+                        if r.area >= min_area_val:
+                            valid_labels.append(r.label)
+                    else:
+                        # CELL MODE: Enforce standard area bounds
+                        if min_area_val <= r.area <= max_area_val:
+                            valid_labels.append(r.label)
+                
+                mask_approved_logic = np.isin(labeled_logic, valid_labels).astype(np.uint8) * 255
+                
+                # --- THE FIX: PREVENT TOP-HAT FROM DELETING THICK FIBERS ---
+                if circ_val < 0:
+                    mask_final = mask_approved_logic.copy()
+                else:
+                    mask_final = cv2.bitwise_and(mask_visual_uint8, mask_approved_logic)
+                
+                mask_final = cv2.bitwise_or(mask_final, manual_add_filled)
+                mask_final = cv2.bitwise_and(mask_final, cv2.bitwise_not(self.eraser_permanent_mask))
+                mask_final = cv2.bitwise_and(mask_final, cv2.bitwise_not(manual_remove_filled))
+
+                self.current_mask = mask_final.copy()
+                
+                # --- STATS & INDIVIDUAL ROI COMPUTATIONS ---
+                labeled_final, num_clusters = measure.label(mask_final > 0, return_num=True)
+                final_regions = measure.regionprops(labeled_final, intensity_image=self.cached_gray)
+
+                mean_intensity = np.mean([r.intensity_mean for r in final_regions]) if num_clusters > 0 else 0
+                areas_total = sum([r.area for r in final_regions])
+                area_percentage = (areas_total / total_pixels) * 100 if total_pixels > 0 else 0
+
+                if state.get('pixel_size_um') in (None, 0.0, 0):
+                    state['pixel_size_um'] = self.get_pixel_size_um(state['file_path'])
+                
+                pixel_size = state['pixel_size_um']
+                if pixel_size is not None:
+                    area_um2 = areas_total * (pixel_size ** 2)
+                    area_um2_str = f" ({round(area_um2, 2)} sq \u03BCm)"
+                else:
+                    area_um2 = 0.0
+                    area_um2_str = " (Scale Unknown)"
+
+                state['stats'] = {
+                    'area': float(areas_total),
+                    'area_percentage': round(area_percentage, 2),
+                    'area_um2': round(area_um2, 2), 
+                    'cluster_count': num_clusters,
+                    'mean_intensity': round(mean_intensity, 2)
+                }
+
+                contours, _ = cv2.findContours(mask_final, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay_rgb, contours, -1, (255, 255, 255), 2)
+                contours_drawn_manually = True
+                
+                state['roi_data'] = []
+                zoom = getattr(self, 'zoom_factor', 1.0)
+                
+                all_centroids = np.array([r.centroid for r in final_regions]) if num_clusters > 0 else np.array([])
+                
+                for idx, r in enumerate(final_regions):
+                    roi_id = idx + 1
+                    cy, cx = r.centroid
+                    cx, cy = int(cx), int(cy)
+                    
+                    mean_gray = r.intensity_mean
+                    int_density = r.area * mean_gray
+                    min_int = r.min_intensity
+                    max_int = r.max_intensity
+                    
+                    r_area_um2 = r.area * (pixel_size ** 2) if pixel_size else None
+                    roi_area_fraction = (r.area / total_pixels) * 100
+                    
+                    if num_clusters > 1:
+                        distances = np.linalg.norm(all_centroids - np.array([r.centroid]), axis=1)
+                        distances[idx] = np.inf 
+                        nearest_neighbor_px = np.min(distances)
+                        nearest_neighbor_um = nearest_neighbor_px * pixel_size if pixel_size else None
+                    else:
+                        nearest_neighbor_px = np.nan
+                        nearest_neighbor_um = np.nan
+                        
+                    perimeter = r.perimeter
+                    circularity = (4 * np.pi * r.area) / (perimeter ** 2) if perimeter > 0 else 0.0
+                    circularity = min(1.0, circularity) 
+                    
+                    state['roi_data'].append({
+                        'ROI ID': roi_id,
+                        'Centroid X (px)': cx,
+                        'Centroid Y (px)': cy,
+                        'Mean Gray Value': round(mean_gray, 2),
+                        'Integrated Density': round(int_density, 2),
+                        'Min Intensity': int(min_int),
+                        'Max Intensity': int(max_int),
+                        'Area (px)': r.area,
+                        'Area (sq um)': round(r_area_um2, 2) if r_area_um2 else 'Unknown',
+                        'Area Fraction (%)': round(roi_area_fraction, 4),
+                        'Perimeter (px)': round(perimeter, 2),
+                        'Circularity': round(circularity, 3),
+                        'Eccentricity': round(r.eccentricity, 3),
+                        'Nearest Neighbor Dist (px)': round(nearest_neighbor_px, 1) if not np.isnan(nearest_neighbor_px) else 'N/A',
+                        'Nearest Neighbor Dist (um)': round(nearest_neighbor_um, 2) if nearest_neighbor_um else 'N/A'
+                    })
+                    
+                    if getattr(self, 'show_roi_numbers', True):
+                        if zoom < 0.8:
+                            if r.area < 300: continue
+                            font_scale = 0.35
+                        elif zoom < 1.8:
+                            if r.area < 50: continue
+                            font_scale = 0.45
+                        else:
+                            font_scale = 0.55
+                        
+                        text_label = f"{roi_id}"
+                        
+                        cv2.putText(overlay_rgb, text_label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 3, cv2.LINE_AA)
+                        cv2.putText(overlay_rgb, text_label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+                
+                stats_meta = f"Fluorescent Area: {round(area_percentage, 2)}%{area_um2_str} | Clusters: {num_clusters}"
+                self.lbl_stats_integrated.config(text=f"{file_meta}\n{stats_meta}")
+            
+            # -----------------------------------------------------------------
+            # ---> CASE 3: PIPELINE OFF <---
+            # -----------------------------------------------------------------
+            else:
+                self.current_mask = None
+                self.lbl_stats_integrated.config(text=f"{file_meta}\nView: Original Image (Auto Detect OFF)")
+
+            if hasattr(self, 'current_manual_remove') and self.current_manual_remove is not None and np.any(self.current_manual_remove > 0):
+                rem_contours, _ = cv2.findContours(self.current_manual_remove, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                red_border_overlay = overlay_rgb.copy()
+                cv2.drawContours(red_border_overlay, rem_contours, -1, (255, 0, 0), 2)
+                cv2.addWeighted(red_border_overlay, 0.80, overlay_rgb, 0.20, 0, overlay_rgb)
+
+            if not contours_drawn_manually:
+                if hasattr(self, 'current_manual_add') and self.current_manual_add is not None and np.any(self.current_manual_add > 0):
+                    add_contours, _ = cv2.findContours(self.current_manual_add, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    white_border_overlay = overlay_rgb.copy()
+                    cv2.drawContours(white_border_overlay, add_contours, -1, (255, 255, 255), 2)
+                    cv2.addWeighted(white_border_overlay, 0.80, overlay_rgb, 0.20, 0, overlay_rgb) 
+
+            # -----------------------------------------------------------------
+            # ---> CANVAS CALCULATIONS <---
+            # -----------------------------------------------------------------
+            canvas_w = self.canvas.winfo_width()
+            canvas_h = self.canvas.winfo_height()
+            if canvas_w < 10: canvas_w, canvas_h = 800, 500 
+            
+            img_h, img_w = overlay_rgb.shape[:2]
+            
+            base_scale = min(canvas_w / img_w, canvas_h / img_h)
+            self.base_w = max(1, int(img_w * base_scale))
+            self.base_h = max(1, int(img_h * base_scale))
+            
+            self.scale_x = img_w / self.base_w
+            self.scale_y = img_h / self.base_h
+            self.offset_x = (canvas_w - self.base_w) // 2
+            self.offset_y = (canvas_h - self.base_h) // 2
+
+            self.base_pil_image = Image.fromarray(overlay_rgb)
+            self.is_processing = False
+            
+            self.fast_redraw()
 
     def process_image(self):
             if self.cached_hsv is None or not self.image_states: return
