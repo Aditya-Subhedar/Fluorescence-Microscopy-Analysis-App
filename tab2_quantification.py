@@ -1187,7 +1187,7 @@ class QuantificationTab(ttk.Frame):
                     clean_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
                     mask_logic_uint8 = cv2.morphologyEx(mask_logic_uint8, cv2.MORPH_OPEN, clean_kernel)
                     ecc_threshold = (abs(circ_val) / 100.0) * 0.85 
-                else:
+                elif circ_val > 0:
                     # CELL MODE: Distance Transform + Watershed on user-thresholded mask
                     if cv2.countNonZero(mask_visual_uint8) > 0:
                         sure_bg = cv2.dilate(mask_visual_uint8, kernel, iterations=2)
@@ -1219,6 +1219,11 @@ class QuantificationTab(ttk.Frame):
                     else:
                         mask_logic_uint8 = mask_visual_uint8.copy()
                     
+                    ecc_threshold = 0.0
+                else:
+                    # ZERO CIRCULARITY: Otsu's Thresholding
+                    _, otsu_mask = cv2.threshold(self.cached_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    mask_logic_uint8 = cv2.bitwise_and(mask_visual_uint8, otsu_mask)
                     ecc_threshold = 0.0
                 
                 # --- SHAPE-SAFE MASK INITIALIZATION & MANUAL TOOL COMBINATION ---
