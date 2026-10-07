@@ -529,6 +529,7 @@ class GraphCreationTab(tk.Frame):
         ttk.Combobox(frame_type, textvariable=self.var_chart_mode, state="readonly",
                     values=["Grouped Bar + Scatter (Prism)", 
                             "Grouped Bar (Mean + Error Only)", 
+                            "Line Graph",
                             "Box Plot (Grouped)", 
                             "Violin Plot (Grouped)",
                             "Scatter with Regression",
@@ -747,6 +748,38 @@ class GraphCreationTab(tk.Frame):
                                                 facecolors='#333333' if colors[i].lower() != "#ffffff" else 'none', 
                                                 edgecolors='black', zorder=5, alpha=0.9)
 
+            elif chart_mode == "Line Graph":
+                for i, sub in enumerate(subgroups):
+                    sub_df = df[df["Subgroup"] == sub]
+                    means, errors, valid_x = [], [], []
+                    
+                    for c_idx, cat in enumerate(categories):
+                        cat_sub_vals = sub_df[sub_df["Category"] == cat]["Value"].values
+                        if len(cat_sub_vals) > 0:
+                            means.append(np.mean(cat_sub_vals))
+                            valid_x.append(c_idx)
+                            if error_mode == "SD (Standard Deviation)":
+                                err_val = np.std(cat_sub_vals) if len(cat_sub_vals) > 1 else 0.0
+                            elif error_mode == "SEM (Standard Error)":
+                                err_val = np.std(cat_sub_vals) / np.sqrt(len(cat_sub_vals)) if len(cat_sub_vals) > 1 else 0.0
+                            else:
+                                err_val = 0.0
+                            errors.append(err_val)
+                        else:
+                            # Plot a gap if data is entirely missing for a category
+                            means.append(np.nan)
+                            errors.append(0.0)
+                            valid_x.append(c_idx)
+
+                    # Plot the main line connecting the means
+                    self.ax.plot(valid_x, means, color=colors[i], marker=marker_cycle[i], 
+                                 markersize=8, linewidth=2.5, label=sub, zorder=3)
+                    
+                    # Add error bars matching the line color
+                    if error_mode != "None":
+                        self.ax.errorbar(valid_x, means, yerr=errors, fmt='none', ecolor=colors[i], 
+                                         capsize=5, elinewidth=1.5, capthick=1.5, zorder=2)
+
             elif chart_mode == "Box Plot (Grouped)":
                 for i, sub in enumerate(subgroups):
                     sub_df = df[df["Subgroup"] == sub]
@@ -944,7 +977,9 @@ class GraphCreationTab(tk.Frame):
                                     y_height = local_max + (highest_data_point * 0.05) + (bracket_level * bracket_increment)
                                     bracket_h = highest_data_point * 0.02
                                     
-                                    self.ax.plot([x1, x1, x2, x2], [y_height-bracket_h, y_height, y_height, y_height-bracket_h], lw=1.2, c='black')
+                                    # Draw bracket lines only for non-line-graph plots
+                                    if chart_mode != "Line Graph":
+                                        self.ax.plot([x1, x1, x2, x2], [y_height-bracket_h, y_height, y_height, y_height-bracket_h], lw=1.2, c='black')
                                     self.ax.text((x1+x2)*.5, y_height, sig_text, ha='center', va='bottom', color='black', fontsize=label_sz, weight='bold')
                                     
                                     dynamic_bracket_y = max(dynamic_bracket_y, y_height + bracket_increment)
