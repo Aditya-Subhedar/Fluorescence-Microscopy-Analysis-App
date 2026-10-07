@@ -1666,13 +1666,22 @@ class QuantificationTab(ttk.Frame):
             if hasattr(self, 'draw_points_img') and len(self.draw_points_img) > 0:
                 if self.draw_mode == "pencil":
                     if self.current_manual_add is not None:
+                        # Create a temporary mask to capture the current pencil stroke
+                        pencil_temp = np.zeros_like(self.current_manual_add)
+                        
                         if len(self.draw_points_img) > 2:
                             pts = np.array([self.draw_points_img], dtype=np.int32)
                             cv2.fillPoly(self.current_manual_add, pts, 255)
+                            cv2.fillPoly(pencil_temp, pts, 255)
                         else:
                             dynamic_radius = max(2, int(15 / getattr(self, 'zoom_factor', 1.0)))
                             cv2.circle(self.current_manual_add, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
-                
+                            cv2.circle(pencil_temp, self.draw_points_img[0], radius=dynamic_radius, color=255, thickness=-1)
+                        
+                        # Unmask the permanent eraser mask where the pencil draws
+                        if hasattr(self, 'eraser_permanent_mask') and self.eraser_permanent_mask is not None:
+                            self.eraser_permanent_mask[pencil_temp > 0] = 0
+
                 elif self.draw_mode == "eraser":
                     if not hasattr(self, 'eraser_permanent_mask') or self.eraser_permanent_mask is None:
                         if self.current_manual_remove is not None:
@@ -1683,7 +1692,6 @@ class QuantificationTab(ttk.Frame):
                     
                     if len(self.draw_points_img) > 2:
                         pts = np.array([self.draw_points_img], dtype=np.int32)
-                        # ---> THE CRITICAL FIX: Fill the entire enclosed shape space solidly <---
                         cv2.fillPoly(eraser_temp, pts, 255)
                         if self.eraser_permanent_mask is not None:
                             cv2.fillPoly(self.eraser_permanent_mask, pts, 255)
@@ -1798,6 +1806,12 @@ class QuantificationTab(ttk.Frame):
                     self.current_manual_add, (orig_cx, orig_cy), (orig_rx, orig_ry), 
                     0, 0, 360, 255, -1
                 )
+                
+                # Unmask the permanent eraser mask where the circle/oval is drawn
+                if hasattr(self, 'eraser_permanent_mask') and self.eraser_permanent_mask is not None:
+                    oval_temp = np.zeros_like(self.eraser_permanent_mask)
+                    cv2.ellipse(oval_temp, (orig_cx, orig_cy), (orig_rx, orig_ry), 0, 0, 360, 255, -1)
+                    self.eraser_permanent_mask[oval_temp > 0] = 0
                 
             self.active_oval = None
             if getattr(self, 'temp_oval_id', None):
