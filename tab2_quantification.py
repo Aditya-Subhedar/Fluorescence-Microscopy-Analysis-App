@@ -79,12 +79,13 @@ class QuantificationTab(ttk.Frame):
         control_frame.pack(fill=tk.X)
         
         # 1. Base Operations
-        self.btn_select_images = tk.Button(control_frame, text="1. Add Images", command=self.load_files, font=("Arial", 9, "bold"))
+        self.btn_select_images = tk.Button(control_frame, text="🔽Add Images", command=self.load_files, font=("Arial", 9, "bold"), bg="#0288d1", fg="white", activebackground="#01579b", activeforeground="white"); 
         self.btn_select_images.pack(side=tk.LEFT, padx=3)
 
         # ---> NEW: Remove Image Button <---
-        self.btn_remove_image = tk.Button(control_frame, text="❌ Remove Image", command=self.remove_current_image, font=("Arial", 9, "bold"), fg="red")
+        self.btn_remove_image = tk.Button(control_frame, text="❌ Remove Image", command=self.remove_current_image, font=("Arial", 9, "bold"), bg="#d32f2f", fg="white", activebackground="#b71c1c", activeforeground="white"); 
         self.btn_remove_image.pack(side=tk.LEFT, padx=3)
+
         
         self.btn_auto = tk.Button(control_frame, text="Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 9, "bold"))
         self.btn_auto.pack(side=tk.LEFT, padx=5)
@@ -121,7 +122,7 @@ class QuantificationTab(ttk.Frame):
         preset_frame.pack(side=tk.LEFT, padx=4)
         tk.Label(preset_frame, text="Preset:", font=("Arial", 8)).pack(side=tk.LEFT, padx=1)
         
-        tk.Button(preset_frame, text="Save Parameters", command=self.save_as_preset, font=("Arial", 9)).pack(side=tk.LEFT, padx=1)
+        tk.Button(preset_frame, text="Save values", command=self.save_as_preset, font=("Arial", 9)).pack(side=tk.LEFT, padx=1)
 
         self.btn_apply_preset = tk.Button(preset_frame, text="Apply Preset", command=self.show_preset_dropdown, font=("Arial", 9))
         self.btn_apply_preset.pack(side=tk.LEFT, padx=1)
@@ -131,8 +132,8 @@ class QuantificationTab(ttk.Frame):
         export_frame.pack(side=tk.RIGHT, padx=4)
         
         # Export Image Button
-        tk.Button(export_frame, text="🖼️ Export Image", command=self.export_current_image_view, 
-                  font=("Arial", 9, "bold"), fg="white", bg="#0288d1").pack(side=tk.LEFT, padx=1)
+        tk.Button(export_frame, text="🧫 Export Image", command=self.export_current_image_view, 
+                  font=("Arial", 9, "bold"), fg="white", bg="#2e7d32").pack(side=tk.LEFT, padx=0)
         
         # Export Data Button
         tk.Button(export_frame, text="📊 Export Data", command=self.export_excel, 
@@ -143,7 +144,7 @@ class QuantificationTab(ttk.Frame):
         mask_io_frame.pack(side=tk.RIGHT, padx=4)
         
         tk.Button(mask_io_frame, text="💾 Save Mask", command=self.save_mask_as_png, 
-                  bg="#1976d2", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=1)
+                  bg="#2e7d32", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=1)
         
         self.btn_apply_mask = tk.Button(
             mask_io_frame, text="📥 Apply Mask", command=self.apply_saved_mask, 
@@ -362,7 +363,7 @@ class QuantificationTab(ttk.Frame):
             self.cached_gray = cv2.cvtColor(img_blur, cv2.COLOR_RGB2GRAY)
             
             self.auto_detect_enabled = False
-            self.btn_auto.config(text="Auto Detect: OFF", fg="red")
+            self.btn_auto.config(text="Detect: OFF", fg="red")
             
             self._ignore_sliders = True 
             
@@ -738,9 +739,9 @@ class QuantificationTab(ttk.Frame):
         self.auto_detect_enabled = not self.auto_detect_enabled
         
         if self.auto_detect_enabled:
-            self.btn_auto.config(text="Auto Detect: ON", fg="white")
+            self.btn_auto.config(text="Detect: ON", fg="green")
         else:
-            self.btn_auto.config(text="Auto Detect: OFF", fg="red")
+            self.btn_auto.config(text="Detect: OFF", fg="red")
             
         self.process_image()
 
@@ -773,7 +774,7 @@ class QuantificationTab(ttk.Frame):
         # Turn Auto Detect ON as soon as a slider is touched
         if not self.auto_detect_enabled:
             self.auto_detect_enabled = True
-            self.btn_auto.config(text="Auto Detect: ON", fg="green")
+            self.btn_auto.config(text="Detect: ON", fg="green")
         
         # ---> GRAB VALUES FROM ALL 4 SLIDERS <---
         h_min, h_max = self.hue_slider.get_values()
@@ -1676,7 +1677,7 @@ class QuantificationTab(ttk.Frame):
         if self.draw_mode in ("pencil", "eraser") and getattr(self, 'is_drawing', False):
             if not self.auto_detect_enabled:
                 self.auto_detect_enabled = True
-                self.btn_auto.config(text="Auto Detect: ON", fg="white")
+                self.btn_auto.config(text="Detect: ON", fg="green")
                 
             color = "red" if self.draw_mode == "eraser" else "white"
             self.canvas.create_line(
@@ -1846,7 +1847,7 @@ class QuantificationTab(ttk.Frame):
             if self.current_manual_add is not None and orig_rx > 0 and orig_ry > 0:
                 if not self.auto_detect_enabled:
                     self.auto_detect_enabled = True
-                    self.btn_auto.config(text="Auto Detect: ON", fg="white")
+                    self.btn_auto.config(text="Detect: ON", fg="green")
                     
                 self.save_state_for_undo()
                 cv2.ellipse(
@@ -2385,7 +2386,7 @@ class QuantificationTab(ttk.Frame):
             # Turn off Auto-Detect visually and functionally
             self.auto_detect_enabled = False
             if hasattr(self, 'btn_auto'):
-                self.btn_auto.config(text="Auto Detect: OFF", fg="yellow")
+                self.btn_auto.config(text="Detect: OFF", fg="yellow")
             
             # Fire the interface redraw pipeline
             self.process_image()
