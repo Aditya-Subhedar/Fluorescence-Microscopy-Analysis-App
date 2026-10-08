@@ -199,40 +199,43 @@ class QuantificationTab(ttk.Frame):
 
         
 
-        # --- SLIDER FRAME ---
-        slider_frame = tk.Frame(root_frame, pady=10)
+                # --- SLIDER FRAME ---
+        slider_frame = tk.Frame(root_frame, pady=0)
         slider_frame.pack(fill=tk.X, padx=10)
 
         # 1. Hue Range 
         hue_frame = tk.Frame(slider_frame)
         hue_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        tk.Label(hue_frame, text="Color Filter (Hue):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
-        self.hue_slider = ColorRangeSlider(hue_frame, width=220, height=25, slider_type="hue", abs_min=0, abs_max=179, command=self.schedule_update) 
-        self.hue_slider.pack(fill=tk.X, pady=5)
+        tk.Label(hue_frame, text="Color Filter (Hue):", font=("Arial", 7, "bold"), pady=0).pack(anchor=tk.W)
+        # Height bumped to 48
+        self.hue_slider = ColorRangeSlider(hue_frame, width=220, height=48, slider_type="hue", abs_min=0, abs_max=179, command=self.schedule_update) 
+        self.hue_slider.pack(fill=tk.X, pady=0)
 
         # 2. Intensity Range 
         int_frame = tk.Frame(slider_frame)
         int_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        tk.Label(int_frame, text="Intensity (0=Black, 255=White):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
-        self.int_slider = ColorRangeSlider(int_frame, width=220, height=25, slider_type="intensity", abs_min=0, abs_max=255, command=self.schedule_update)
-        self.int_slider.pack(fill=tk.X, pady=5)
+        tk.Label(int_frame, text="Intensity (0=Black, 255=White):", font=("Arial", 7, "bold"), pady=0).pack(anchor=tk.W)
+        # Height bumped to 48
+        self.int_slider = ColorRangeSlider(int_frame, width=220, height=48, slider_type="intensity", abs_min=0, abs_max=255, command=self.schedule_update)
+        self.int_slider.pack(fill=tk.X, pady=0)
 
         # 3. Area Range
         area_frame = tk.Frame(slider_frame)
         area_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        tk.Label(area_frame, text="Area Filter (px):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
-        self.area_slider = ColorRangeSlider(area_frame, width=220, height=25, slider_type="area", abs_min=0, abs_max=1000, command=self.schedule_update)
-        self.area_slider.pack(fill=tk.X, pady=5)
+        tk.Label(area_frame, text="Area Filter (px):", font=("Arial", 7, "bold"), pady=0).pack(anchor=tk.W)
+        # Height bumped to 48
+        self.area_slider = ColorRangeSlider(area_frame, width=220, height=48, slider_type="area", abs_min=0, abs_max=1000, command=self.schedule_update)
+        self.area_slider.pack(fill=tk.X, pady=0)
         
-        # 4. Circularity / Split (Updated to Single Slider)
+        # 4. Circularity / Split (Single Slider)
         circ_frame = tk.Frame(slider_frame)
         circ_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        # Updated Label to reflect the new range to the user
-        tk.Label(circ_frame, text="Morphology (-100=Line, 0=All, 100=Circle):", font=("Arial", 9, "bold")).pack(anchor=tk.W)
-        # Updated abs_min to -100. 
-        self.circ_slider = SingleSlider(circ_frame, width=220, height=25, abs_min=-100, abs_max=100, default_value=0, command=self.schedule_update)
-        self.circ_slider.pack(fill=tk.X, pady=5)
+        tk.Label(circ_frame, text="Morphology (-100=Line, 0=All, 100=Circle):", font=("Arial", 7, "bold"), pady=0).pack(anchor=tk.W)
+        # Height bumped to 48
+        self.circ_slider = SingleSlider(circ_frame, width=220, height=48, abs_min=-100, abs_max=100, default_value=0, command=self.schedule_update)
+        self.circ_slider.pack(fill=tk.X, pady=0)
+
 
         # Canvas
         self.canvas_frame = tk.Frame(root_frame, bg="black")
