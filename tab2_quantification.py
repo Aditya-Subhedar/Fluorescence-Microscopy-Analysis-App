@@ -78,54 +78,90 @@ class QuantificationTab(ttk.Frame):
         control_frame = tk.Frame(root_frame, pady=5)
         control_frame.pack(fill=tk.X)
         
-        # 1. Base Operations
-        self.btn_select_images = tk.Button(control_frame, text="🔽Add Images", command=self.load_files, font=("Arial", 9, "bold"), bg="#0288d1", fg="white", activebackground="#01579b", activeforeground="white"); 
+        # 1. Base Operations (Image Management Frame)
+        image_mgmt_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
+        image_mgmt_frame.pack(side=tk.LEFT, padx=4)
+
+        # Add Images Button (Packed inside image_mgmt_frame)
+        self.btn_select_images = tk.Button(image_mgmt_frame, text="🔽Add Images", command=self.load_files, font=("Arial", 9, "bold"), bg="#0288d1", fg="white", activebackground="#01579b", activeforeground="white")
         self.btn_select_images.pack(side=tk.LEFT, padx=3)
 
-        # ---> NEW: Remove Image Button <---
-        self.btn_remove_image = tk.Button(control_frame, text="❌ Remove Image", command=self.remove_current_image, font=("Arial", 9, "bold"), bg="#d32f2f", fg="white", activebackground="#b71c1c", activeforeground="white"); 
+        # Remove Image Button (Packed inside image_mgmt_frame)
+        self.btn_remove_image = tk.Button(image_mgmt_frame, text="❌ Remove Image", command=self.remove_current_image, font=("Arial", 9, "bold"), bg="#d32f2f", fg="white", activebackground="#b71c1c", activeforeground="white")
         self.btn_remove_image.pack(side=tk.LEFT, padx=3)
 
+
         
-        self.btn_auto = tk.Button(control_frame, text="Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 9, "bold"))
-        self.btn_auto.pack(side=tk.LEFT, padx=5)
+        # Detection & Labeling Frame
+        detect_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
+        detect_frame.pack(side=tk.LEFT, padx=4)
+
+        # Detect Button (Packed inside detect_frame)
+        self.btn_auto = tk.Button(detect_frame, text="Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 9, "bold"))
+        self.btn_auto.pack(side=tk.LEFT, padx=3)
 
         # ---> NEW: ROI Number Toggle <---
         self.show_roi_numbers = True # Default state
-        self.btn_toggle_nums = tk.Button(control_frame, text="# Labels: ON", command=self.toggle_roi_numbers, fg="green", font=("Arial", 9, "bold"))
-        self.btn_toggle_nums.pack(side=tk.LEFT, padx=2)
+        # Labels Button (Packed inside detect_frame)
+        self.btn_toggle_nums = tk.Button(detect_frame, text="# Labels: ON", command=self.toggle_roi_numbers, fg="green", font=("Arial", 9, "bold"))
+        self.btn_toggle_nums.pack(side=tk.LEFT, padx=3)
+
         
         # 2. Drawing Tools Frame
-        tool_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
-        tool_frame.pack(side=tk.LEFT, padx=4)
-        tk.Label(tool_frame, text="Tools:", font=("Arial", 8)).pack(side=tk.LEFT, padx=1)
+        # Added fill=tk.Y to stretch the frame vertically matching the rest
+        tool_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2, bg="#f5f5f5")
+        tool_frame.pack(side=tk.LEFT, padx=4, fill=tk.Y)
+        tk.Label(tool_frame, text="Tools:", font=("Arial", 9, "bold"), bg="#f5f5f5", fg="#333333").pack(side=tk.LEFT, padx=3)
         
-        self.btn_pencil = tk.Button(tool_frame, text="✏️", relief=tk.RAISED, command=lambda: self.set_draw_mode("pencil"))
-        self.btn_pencil.pack(side=tk.LEFT, padx=1)
+        # Unified layout configuration for flawless alignment
+        # Width/Height values are standardized; adjusting relief and fonts to be uniform
+        btn_font = ("Arial", 10)
+        btn_height = 1  # Ensures text rows match up exactly
+        btn_width = 3   # Standard square-like box for tool icons
+        
+        self.btn_pencil = tk.Button(tool_frame, text="🖋️", font=btn_font, width=btn_width, height=btn_height,
+                                    bg="#e1f5fe", fg="#0288d1", activebackground="#b3e5fc", relief=tk.RAISED, bd=1,
+                                    command=lambda: self.set_draw_mode("pencil"))
+        self.btn_pencil.pack(side=tk.LEFT, padx=2, fill=tk.Y)
 
-        self.btn_circle = tk.Button(tool_frame, text="⭕", width=2, command=lambda: self.set_draw_mode("circle"), font=("Arial", 9, "bold"))
-        self.btn_circle.pack(side=tk.LEFT, padx=1)
+        self.btn_circle = tk.Button(tool_frame, text="🧫", font=btn_font, width=btn_width, height=btn_height,
+                                    bg="#efebe9", fg="#5d4037", activebackground="#d7ccc8", relief=tk.RAISED, bd=1,
+                                    command=lambda: self.set_draw_mode("circle"))
+        self.btn_circle.pack(side=tk.LEFT, padx=2, fill=tk.Y)
         
-        self.btn_eraser = tk.Button(tool_frame, text="🧹", relief=tk.RAISED, command=lambda: self.set_draw_mode("eraser"))
-        self.btn_eraser.pack(side=tk.LEFT, padx=1)
+        self.btn_eraser = tk.Button(tool_frame, text="🧼", font=btn_font, width=btn_width, height=btn_height,
+                                    bg="#fce4ec", fg="#c2185b", activebackground="#f8bbd0", relief=tk.RAISED, bd=1,
+                                    command=lambda: self.set_draw_mode("eraser"))
+        self.btn_eraser.pack(side=tk.LEFT, padx=2, fill=tk.Y)
 
-        self.btn_undo = tk.Button(tool_frame, text="←", command=self.undo_action, font=("Arial", 9)) # Compact icon only
-        self.btn_undo.pack(side=tk.LEFT, padx=1)
+        self.btn_undo = tk.Button(tool_frame, text="←", font=btn_font, width=btn_width, height=btn_height,
+                                   bg="#f5f5f5", fg="#424242", activebackground="#e0e0e0", relief=tk.RAISED, bd=1,
+                                   command=self.undo_action) 
+        self.btn_undo.pack(side=tk.LEFT, padx=2, fill=tk.Y)
 
-        self.btn_redo = tk.Button(tool_frame, text="→", command=self.redo_action, font=("Arial", 9)) # Compact icon only
-        self.btn_redo.pack(side=tk.LEFT, padx=1)
+        self.btn_redo = tk.Button(tool_frame, text="→", font=btn_font, width=btn_width, height=btn_height,
+                                   bg="#f5f5f5", fg="#424242", activebackground="#e0e0e0", relief=tk.RAISED, bd=1,
+                                   command=self.redo_action) 
+        self.btn_redo.pack(side=tk.LEFT, padx=2, fill=tk.Y)
         
-        tk.Button(tool_frame, text="Clear All", command=self.clear_drawing, fg="red", font=("Arial", 9)).pack(side=tk.LEFT, padx=3)
+        # 'Clear All' uses a wider layout but matches the exact same frame height constraints
+        tk.Button(tool_frame, text="Clear All", font=("Arial", 9, "bold"), height=btn_height,
+                  bg="#d32f2f", fg="#ffffff", activebackground="#d32f2f", relief=tk.RAISED, bd=1,
+                  command=self.clear_drawing).pack(side=tk.LEFT, padx=5, fill=tk.Y)
+
+
         
-        # 3. Parameters/Presets Frame (Shortened text labels to preserve space)
+        # 3. Parameters/Presets Frame 
+        # Added fill=tk.Y to ensure consistent height
         preset_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
-        preset_frame.pack(side=tk.LEFT, padx=4)
+        preset_frame.pack(side=tk.LEFT, padx=4, fill=tk.Y)
         tk.Label(preset_frame, text="Preset:", font=("Arial", 8)).pack(side=tk.LEFT, padx=1)
         
-        tk.Button(preset_frame, text="Save values", command=self.save_as_preset, font=("Arial", 9)).pack(side=tk.LEFT, padx=1)
+        tk.Button(preset_frame, text="Save values", command=self.save_as_preset, font=("Arial", 9, "bold"), pady=0).pack(side=tk.LEFT, padx=1)
 
-        self.btn_apply_preset = tk.Button(preset_frame, text="Apply Preset", command=self.show_preset_dropdown, font=("Arial", 9))
+        self.btn_apply_preset = tk.Button(preset_frame, text="Apply Preset", command=self.show_preset_dropdown, font=("Arial", 9, "bold"), pady=0)
         self.btn_apply_preset.pack(side=tk.LEFT, padx=1)
+
 
         # 4. ---> NEW: DATA & IMAGE EXPORTS FRAME <---
         export_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
