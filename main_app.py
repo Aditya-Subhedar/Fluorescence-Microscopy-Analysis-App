@@ -1,13 +1,24 @@
 import ctypes
+# =========================================================================
+# HIGH-DPI SCALING & WINDOWS TASKBAR FIX (Must run before tk.Tk() initialization)
+# =========================================================================
 try:
-    # Tells Windows to make the Tkinter app DPI-aware for crisp fonts
+    # 1. Primary method for modern Windows (8.1, 10, 11)
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    
+except Exception:
+    try:
+        # 2. Fallback method for older Windows environments (7, 8)
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass # Safe fallback for non-Windows operating systems (macOS, Linux)
+
+try:
     # Force Windows Taskbar to treat KytoQuant as an independent application
-    myappid = 'KytoQuant.workspace.v1.2.0'
+    myappid = 'KytoQuant.workspace.v1.5.0'
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception:
     pass
+
 import tkinter as tk
 from tkinter import ttk
 import os
@@ -79,7 +90,7 @@ class SplashScreen(tk.Toplevel):
 class KytoQuantApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("KytoQuant v1.4.1")
+        self.root.title("KytoQuant v1.5.0")
         self.root.state('zoomed')
 
         # Apply icon globally to root and all future top levels
