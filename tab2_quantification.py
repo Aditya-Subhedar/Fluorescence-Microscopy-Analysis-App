@@ -107,86 +107,95 @@ class QuantificationTab(ttk.Frame):
         self.btn_toggle_nums.pack(side=tk.LEFT, padx=3)
 
         
+                # Standardized structural spacing (DPI / Resolution adaptive)
+        FRAME_GAP = 6 
+        BTN_IPADX = 8
+        BTN_IPADY = 4
+        btn_font = ("Arial", 9, "bold")
+        
+        # =========================================================================
+        # [LEFT SIDE LOGIC]
+        # =========================================================================
+        
         # 2. Drawing Tools Frame
-        # Added fill=tk.Y to stretch the frame vertically matching the rest
         tool_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2, bg="#f5f5f5")
-        tool_frame.pack(side=tk.LEFT, padx=4, fill=tk.Y)
+        tool_frame.pack(side=tk.LEFT, padx=FRAME_GAP, fill=tk.Y)
         tk.Label(tool_frame, text="Tools:", font=("Arial", 9, "bold"), bg="#f5f5f5", fg="#333333").pack(side=tk.LEFT, padx=3)
         
-        # Unified layout configuration for flawless alignment
-        # Width/Height values are standardized; adjusting relief and fonts to be uniform
-        btn_font = ("Arial", 10)
-        btn_height = 1  # Ensures text rows match up exactly
-        btn_width = 3   # Standard square-like box for tool icons
-        
-        self.btn_pencil = tk.Button(tool_frame, text="🖋️", font=btn_font, width=btn_width, height=btn_height,
+        self.btn_pencil = tk.Button(tool_frame, text="🖋️", font=btn_font,
                                     bg="#e1f5fe", fg="#0288d1", activebackground="#b3e5fc", relief=tk.RAISED, bd=1,
                                     command=lambda: self.set_draw_mode("pencil"))
-        self.btn_pencil.pack(side=tk.LEFT, padx=2, fill=tk.Y)
+        self.btn_pencil.pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=BTN_IPADX, ipady=BTN_IPADY)
 
-        self.btn_circle = tk.Button(tool_frame, text="🧫", font=btn_font, width=btn_width, height=btn_height,
+        self.btn_circle = tk.Button(tool_frame, text="🧫", font=btn_font,
                                     bg="#efebe9", fg="#5d4037", activebackground="#d7ccc8", relief=tk.RAISED, bd=1,
                                     command=lambda: self.set_draw_mode("circle"))
-        self.btn_circle.pack(side=tk.LEFT, padx=2, fill=tk.Y)
+        self.btn_circle.pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=BTN_IPADX, ipady=BTN_IPADY)
         
-        self.btn_eraser = tk.Button(tool_frame, text="🧼", font=btn_font, width=btn_width, height=btn_height,
+        self.btn_eraser = tk.Button(tool_frame, text="🧼", font=btn_font,
                                     bg="#fce4ec", fg="#c2185b", activebackground="#f8bbd0", relief=tk.RAISED, bd=1,
                                     command=lambda: self.set_draw_mode("eraser"))
-        self.btn_eraser.pack(side=tk.LEFT, padx=2, fill=tk.Y)
+        self.btn_eraser.pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=BTN_IPADX, ipady=BTN_IPADY)
 
-        self.btn_undo = tk.Button(tool_frame, text="←", font=btn_font, width=btn_width, height=btn_height,
+        self.btn_undo = tk.Button(tool_frame, text="←", font=btn_font,
                                    bg="#f5f5f5", fg="#424242", activebackground="#e0e0e0", relief=tk.RAISED, bd=1,
                                    command=self.undo_action) 
-        self.btn_undo.pack(side=tk.LEFT, padx=2, fill=tk.Y)
+        self.btn_undo.pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=BTN_IPADX, ipady=BTN_IPADY)
 
-        self.btn_redo = tk.Button(tool_frame, text="→", font=btn_font, width=btn_width, height=btn_height,
+        self.btn_redo = tk.Button(tool_frame, text="→", font=btn_font,
                                    bg="#f5f5f5", fg="#424242", activebackground="#e0e0e0", relief=tk.RAISED, bd=1,
                                    command=self.redo_action) 
-        self.btn_redo.pack(side=tk.LEFT, padx=2, fill=tk.Y)
+        self.btn_redo.pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=BTN_IPADX, ipady=BTN_IPADY)
         
-        # 'Clear All' uses a wider layout but matches the exact same frame height constraints
-        tk.Button(tool_frame, text="Clear All", font=("Arial", 9, "bold"), height=btn_height,
-                  bg="#d32f2f", fg="#ffffff", activebackground="#d32f2f", relief=tk.RAISED, bd=1,
-                  command=self.clear_drawing).pack(side=tk.LEFT, padx=5, fill=tk.Y)
+        tk.Button(tool_frame, text="Clear All", font=btn_font,
+                  bg="#d32f2f", fg="#ffffff", activebackground="#b71c1c", relief=tk.RAISED, bd=1,
+                  command=self.clear_drawing).pack(side=tk.LEFT, padx=4, fill=tk.Y, ipadx=6, ipady=BTN_IPADY)
 
-
-        
         # 3. Parameters/Presets Frame 
-        # Added fill=tk.Y to ensure consistent height
         preset_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
-        preset_frame.pack(side=tk.LEFT, padx=4, fill=tk.Y)
-        tk.Label(preset_frame, text="Preset:", font=("Arial", 8)).pack(side=tk.LEFT, padx=1)
+        preset_frame.pack(side=tk.LEFT, padx=FRAME_GAP, fill=tk.Y)
+        tk.Label(preset_frame, text="Preset:", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=3)
         
-        tk.Button(preset_frame, text="Save values", command=self.save_as_preset, font=("Arial", 9, "bold"), pady=0).pack(side=tk.LEFT, padx=1)
+        tk.Button(preset_frame, text="Save values", font=btn_font, relief=tk.RAISED, bd=1,
+                  command=self.save_as_preset).pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=6, ipady=BTN_IPADY)
 
-        self.btn_apply_preset = tk.Button(preset_frame, text="Apply Preset", command=self.show_preset_dropdown, font=("Arial", 9, "bold"), pady=0)
-        self.btn_apply_preset.pack(side=tk.LEFT, padx=1)
+        self.btn_apply_preset = tk.Button(preset_frame, text="Apply Preset", font=btn_font, relief=tk.RAISED, bd=1,
+                                          command=self.show_preset_dropdown)
+        self.btn_apply_preset.pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=6, ipady=BTN_IPADY)
 
 
-        # 4. ---> NEW: DATA & IMAGE EXPORTS FRAME <---
-        export_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
-        export_frame.pack(side=tk.RIGHT, padx=4)
+        # =========================================================================
+        # [DYNAMIC COUPLING SPRING]
+        # =========================================================================
+        # This empty frame expanding horizontally pushes all subsequent blocks to the right window frame edge
+        spacer = tk.Frame(control_frame)
+        spacer.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+
+        # =========================================================================
+        # [RIGHT SIDE LOGIC]
+        # =========================================================================
         
-        # Export Image Button
-        tk.Button(export_frame, text="🧫 Export Image", command=self.export_current_image_view, 
-                  font=("Arial", 9, "bold"), fg="white", bg="#2e7d32").pack(side=tk.LEFT, padx=0)
-        
-        # Export Data Button
-        tk.Button(export_frame, text="📊 Export Data", command=self.export_excel, 
-                  font=("Arial", 9, "bold"), fg="white", bg="#2e7d32").pack(side=tk.LEFT, padx=1)
-
         # 5. Mask Import / Export Frame
         mask_io_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
-        mask_io_frame.pack(side=tk.RIGHT, padx=4)
+        mask_io_frame.pack(side=tk.LEFT, padx=FRAME_GAP, fill=tk.Y)
         
-        tk.Button(mask_io_frame, text="💾 Save Mask", command=self.save_mask_as_png, 
-                  bg="#2e7d32", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=1)
+        tk.Button(mask_io_frame, text="💾 Save Mask", font=btn_font, bg="#2e7d32", fg="white", activebackground="#1b5e20", relief=tk.RAISED, bd=1,
+                  command=self.save_mask_as_png).pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=6, ipady=BTN_IPADY)
         
-        self.btn_apply_mask = tk.Button(
-            mask_io_frame, text="📥 Apply Mask", command=self.apply_saved_mask, 
-            bg="#ef6c00", fg="white", font=("Arial", 9, "bold")
-        )
-        self.btn_apply_mask.pack(side=tk.LEFT, padx=1)
+        self.btn_apply_mask = tk.Button(mask_io_frame, text="📥 Apply Mask", font=btn_font, bg="#ef6c00", fg="white", activebackground="#e65100", relief=tk.RAISED, bd=1,
+                                        command=self.apply_saved_mask)
+        self.btn_apply_mask.pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=6, ipady=BTN_IPADY)
+
+        # 4. DATA & IMAGE EXPORTS FRAME
+        export_frame = tk.Frame(control_frame, bd=1, relief=tk.SOLID, padx=3, pady=2)
+        export_frame.pack(side=tk.LEFT, padx=FRAME_GAP, fill=tk.Y)
+        
+        tk.Button(export_frame, text="🧫 Export Image", font=btn_font, fg="white", bg="#2e7d32", activebackground="#1b5e20", relief=tk.RAISED, bd=1,
+                  command=self.export_current_image_view).pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=6, ipady=BTN_IPADY)
+        
+        tk.Button(export_frame, text="📊 Export Data", font=btn_font, fg="white", bg="#2e7d32", activebackground="#1b5e20", relief=tk.RAISED, bd=1,
+                  command=self.export_excel).pack(side=tk.LEFT, padx=2, fill=tk.Y, ipadx=6, ipady=BTN_IPADY)
 
         
 
