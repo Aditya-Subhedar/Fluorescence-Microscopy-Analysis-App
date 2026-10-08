@@ -79,8 +79,12 @@ class QuantificationTab(ttk.Frame):
         control_frame.pack(fill=tk.X)
         
         # 1. Base Operations
-        self.btn_select_images = tk.Button(control_frame, text="1. Select Images", command=self.load_files, font=("Arial", 9, "bold"))
+        self.btn_select_images = tk.Button(control_frame, text="1. Add Images", command=self.load_files, font=("Arial", 9, "bold"))
         self.btn_select_images.pack(side=tk.LEFT, padx=3)
+
+        # ---> NEW: Remove Image Button <---
+        self.btn_remove_image = tk.Button(control_frame, text="❌ Remove Image", command=self.remove_current_image, font=("Arial", 9, "bold"), fg="red")
+        self.btn_remove_image.pack(side=tk.LEFT, padx=3)
         
         self.btn_auto = tk.Button(control_frame, text="Detect: OFF", command=self.toggle_auto_detect, fg="red", font=("Arial", 9, "bold"))
         self.btn_auto.pack(side=tk.LEFT, padx=5)
@@ -237,7 +241,7 @@ class QuantificationTab(ttk.Frame):
 
     # --- Loadng ---
     def load_files(self):
-        """Standalone loader for Tab 2: Disconnects from Tab 1 and loads files directly."""
+        """Appends selected files to the current collection instead of overwriting."""
         filetypes = [
             ("All Supported Images", "*.tif *.tiff *.jpg *.jpeg *.jfif *.png *.czi *.JPG *.JPEG *.PNG"),
             ("JPEG Images", "*.jpg *.jpeg *.jfif *.JPG *.JPEG"),
@@ -250,32 +254,42 @@ class QuantificationTab(ttk.Frame):
         if not files: 
             return
                 
-        self.image_files = sorted(list(files))
-        self.current_index = 0
-        self.image_states = []
+        # Initialize lists if they don't exist yet
+        if not hasattr(self, 'image_files'): self.image_files = []
+        if not hasattr(self, 'image_states'): self.image_states = []
+        
+        new_files = sorted(list(files))
+        added_count = 0
             
-        # --- NEW: Clear the cache for the new file pool ---
-        with self.cache_lock:
-            self.image_cache.clear()
-            
-        for file_path in self.image_files:
-            self.image_states.append({
-                'file_path': file_path,
-                'hue_min': 0, 
-                'hue_max': 179,
-                'int_min': 0,
-                'int_max': 255,
-                'area_min_pos': 30,
-                'area_max_pos': 1000,
-                'manual_mask_add': None, 
-                'manual_mask_remove': None,
-                'undo_stack': [], 
-                'redo_stack': []  
-            })
-            
-        # Trigger loading the first image
-        self.load_current_image_data()
-        self.update_nav_button_states()
+        for file_path in new_files:
+            # Prevent adding duplicates
+            if file_path not in self.image_files:
+                self.image_files.append(file_path)
+                self.image_states.append({
+                    'file_path': file_path,
+                    'hue_min': 0, 
+                    'hue_max': 179,
+                    'int_min': 0,
+                    'int_max': 255,
+                    'area_min_pos': 30,
+                    'area_max_pos': 1000,
+                    'manual_mask_add': None, 
+                    'manual_mask_remove': None,
+                    'undo_stack': [], 
+                    'redo_stack': []  
+                })
+                added_count += 1
+                
+        if added_count > 0:
+            # If this is the very first batch of images, initialize the view
+            if len(self.image_files) == added_count:
+                self.current_index = 0
+                self.load_current_image_data()
+            else:
+                # If images were appended, trigger cache manager to keep background memory clean
+                self.manage_cache_pipeline()
+                
+            self.update_nav_button_states()
 
     def load_images_from_tab1(self, passed_files):
         """Bridge method to receive files directly from Tab 1."""
@@ -385,6 +399,39 @@ class QuantificationTab(ttk.Frame):
         except Exception as e:
             import traceback
             traceback.print_exc()
+
+    def remove_current_image(self):
+        """Removes the currently visible image from the application pipeline."""
+        if not hasattr(self, 'image_files') or not self.image_files:
+            return
+            
+        # Pop the current image from tracking lists
+        removed_file = self.image_files.pop(self.current_index)
+        self.image_states.pop(self.current_index)
+        
+        # Free up memory in the background cache
+        with self.cache_lock:
+            if removed_file in self.image_cache:
+                del self.image_cache[removed_file]
+                
+        # Handle UI resets based on remaining images
+        if not self.image_files:
+            # If the user deleted the last remaining image
+            self.current_index = 0
+            self.canvas.delete("all")
+            self.original_image_rgb = None
+            self.current_mask = None
+            if hasattr(self, 'lbl_stats_integrated'):
+                self.lbl_stats_integrated.config(text="No images loaded.")
+            self.update_nav_button_states()
+        else:
+            # Shift index backward if they deleted the very last image in the array
+            if self.current_index >= len(self.image_files):
+                self.current_index = len(self.image_files) - 1
+            
+            # Reload the new current image and update bounds
+            self.load_current_image_data()
+            self.update_nav_button_states()
 
     def get_image_from_cache(self, path):
         """Fetches an image from memory if cached; otherwise loads it synchronously."""
