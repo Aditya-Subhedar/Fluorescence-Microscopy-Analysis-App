@@ -87,7 +87,7 @@ class QuantificationTab(ttk.Frame):
         self.btn_select_images.pack(side=tk.LEFT, padx=3)
 
         # Remove Image Button (Packed inside image_mgmt_frame)
-        self.btn_remove_image = tk.Button(image_mgmt_frame, text="❌ Remove Image", command=self.remove_current_image, font=("Arial", 9, "bold"), bg="#d32f2f", fg="white", activebackground="#b71c1c", activeforeground="white")
+        self.btn_remove_image = tk.Button(image_mgmt_frame, text="❌Remove Image", command=self.remove_current_image, font=("Arial", 9, "bold"), bg="#d32f2f", fg="white", activebackground="#b71c1c", activeforeground="white")
         self.btn_remove_image.pack(side=tk.LEFT, padx=3)
 
 
