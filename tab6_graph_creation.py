@@ -536,9 +536,9 @@ class GraphCreationTab(tk.Frame):
         frame_type.pack(fill=tk.X, padx=10, pady=5)
 
         tk.Label(frame_type, text="Chart Mode:").pack(anchor="w", padx=5)
-        # Pull the last selected mode from the class variable
         self.var_chart_mode = tk.StringVar(value=GraphCreationTab.last_selected_mode)
         
+        # ---> FIX: Re-added the cb_chart_mode creation here
         cb_chart_mode = ttk.Combobox(frame_type, textvariable=self.var_chart_mode, state="readonly",
                     values=["Grouped Bar + Scatter (Prism)", 
                             "Grouped Bar (Mean + Error Only)", 
@@ -577,7 +577,6 @@ class GraphCreationTab(tk.Frame):
         tk.Label(frame_colors, text="Custom Colors (Comma sep):").pack(anchor="w", padx=5)
         self.var_hex_colors = tk.StringVar(value="")
         
-        # Sub-frame for Entry + Color Picker Button side-by-side
         color_input_frame = tk.Frame(frame_colors)
         color_input_frame.pack(fill=tk.X, padx=5, pady=2)
         
@@ -624,15 +623,20 @@ class GraphCreationTab(tk.Frame):
 
         tk.Label(frame_sig, text="Significance Testing (α = 0.05):").pack(anchor="w", padx=5)
         self.var_stats_mode = tk.StringVar(value="T-Test (Compare to 1st Subgroup)")
-        ttk.Combobox(frame_sig, textvariable=self.var_stats_mode, state="readonly",
+        
+        # ---> FIX: Properly instantiated the cb_stats_mode variable here in Step 7
+        cb_stats_mode = ttk.Combobox(frame_sig, textvariable=self.var_stats_mode, state="readonly",
                      values=[
                          "None", 
                          "T-Test (Compare to 1st Subgroup)", 
                          "T-Test (Compare Adjacent Pairs)",
                          "T-Test (All Pairwise Combinations)",
                          "Mann-Whitney U (Compare to 1st Subgroup)",
-                         "One-Way ANOVA (Overall)"
-                     ]).pack(fill=tk.X, padx=5, pady=2)
+                         "One-Way ANOVA (Overall)",
+                         "Two-Way ANOVA (Overall & Interaction)"
+                     ])
+        cb_stats_mode.pack(fill=tk.X, padx=5, pady=2)
+        cb_stats_mode.bind("<<ComboboxSelected>>", lambda e: self.generate_plot())
 
         lbl_stats_info = tk.Label(frame_sig, text="* p≤0.05, ** p≤0.01, *** p≤0.001", 
                                   font=("Arial", 8, "italic"), fg="#555", justify=tk.LEFT)
@@ -950,7 +954,86 @@ class GraphCreationTab(tk.Frame):
             dynamic_bracket_y = highest_data_point * 1.05
             bracket_increment = highest_data_point * 0.10
 
-            if stats_mode != "None" and len(subgroups) > 1 and chart_mode not in ["Scatter with Regression", "Paired Slope Plot"]:
+            # --- Two-Way ANOVA with Capped Span Brackets & Stars ---
+            if stats_mode == "Two-Way ANOVA (Overall & Interaction)" and len(categories) > 1 and len(subgroups) > 1:
+                try:
+                    import statsmodels.api as sm
+                    from statsmodels.formula.api import ols
+                    from itertools import groupby
+                    from operator import itemgetter
+
+                    # 1. Fit Two-Way ANOVA model
+                    df_anova = df.rename(columns={'Value': 'Val', 'Category': 'Cat', 'Subgroup': 'Sub'})
+                    model = ols('Val ~ C(Cat) * C(Sub)', data=df_anova).fit()
+                    
+                    # 2. Perform post-hoc comparison per category to find significant range
+                    sig_indices = []
+                    sig_p_vals = []
+                    
+                    for c_idx, cat in enumerate(categories):
+                        cat_df = df[df["Category"] == cat]
+                        if len(subgroups) == 2:
+                            d1 = cat_df[cat_df["Subgroup"] == subgroups[0]]["Value"].values
+                            d2 = cat_df[cat_df["Subgroup"] == subgroups[1]]["Value"].values
+                            if len(d1) >= 2 and len(d2) >= 2:
+                                _, p = stats.ttest_ind(d1, d2, equal_var=False)
+                                if p < 0.05:
+                                    sig_indices.append(c_idx)
+                                    sig_p_vals.append(p)
+                        else:
+                            group_data = [cat_df[cat_df["Subgroup"] == s]["Value"].values for s in subgroups]
+                            valid_g = [g for g in group_data if len(g) >= 2]
+                            if len(valid_g) == len(subgroups):
+                                _, p = stats.f_oneway(*valid_g)
+                                if p < 0.05:
+                                    sig_indices.append(c_idx)
+                                    sig_p_vals.append(p)
+
+                    # 3. Draw Capped Spanning Brackets with Red Stars OR 'ns' Label
+                    if sig_indices:
+                        ranges = []
+                        for k, g in groupby(enumerate(sig_indices), lambda ix: ix[0] - ix[1]):
+                            ranges.append(list(map(itemgetter(1), g)))
+
+                        for r_group in ranges:
+                            start_idx, end_idx = r_group[0], r_group[-1]
+                            
+                            max_y = max([
+                                bar_max_heights.get((categories[i], sub), highest_data_point)
+                                for i in r_group for sub in subgroups
+                            ])
+                            
+                            y_height = max_y + (highest_data_point * 0.08)
+                            cap_h = highest_data_point * 0.03
+                            
+                            min_p = min([sig_p_vals[sig_indices.index(i)] for i in r_group])
+                            stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
+                            
+                            if start_idx == end_idx:
+                                self.ax.plot([start_idx - 0.15, start_idx + 0.15], [y_height, y_height], color='black', lw=1.2)
+                                self.ax.plot([start_idx - 0.15, start_idx - 0.15], [y_height - cap_h, y_height], color='black', lw=1.2)
+                                self.ax.plot([start_idx + 0.15, start_idx + 0.15], [y_height - cap_h, y_height], color='black', lw=1.2)
+                                x_mid = start_idx
+                            else:
+                                self.ax.plot([start_idx, end_idx], [y_height, y_height], color='black', lw=1.2)
+                                self.ax.plot([start_idx, start_idx], [y_height - cap_h, y_height], color='black', lw=1.2)
+                                self.ax.plot([end_idx, end_idx], [y_height - cap_h, y_height], color='black', lw=1.2)
+                                x_mid = (start_idx + end_idx) / 2.0
+                            
+                            self.ax.text(x_mid, y_height + (highest_data_point * 0.01), stars, 
+                                         ha='center', va='bottom', color='red', fontsize=label_sz + 2, weight='bold')
+                            
+                            dynamic_bracket_y = max(dynamic_bracket_y, y_height + cap_h + (highest_data_point * 0.10))
+                    else:
+                        # Fallback label if two-way ANOVA finds no significant differences (p >= 0.05)
+                        self.ax.text(0.5, 0.95, "Two-Way ANOVA: ns (p ≥ 0.05)", transform=self.ax.transAxes,
+                                     ha='center', va='top', color='gray', fontsize=label_sz - 1,
+                                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='lightgray'))
+
+                except Exception as e:
+                    print(f"Two-Way ANOVA Rendering Error: {e}")
+
+            elif stats_mode != "None" and len(subgroups) > 1 and chart_mode not in ["Scatter with Regression", "Paired Slope Plot"]:
                 for cat in categories:
                     cat_df = df[df["Category"] == cat]
                     bracket_level = 0
