@@ -1,6 +1,6 @@
 import os
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, colorchooser
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
@@ -22,6 +22,7 @@ if os.name == 'nt':
         pass
 
 class GraphCreationTab(tk.Frame):
+    last_selected_mode = "Grouped Bar (Mean + Error Only)"
     def __init__(self, parent):
         super().__init__(parent, bg="#f8f9fa")
         
@@ -461,6 +462,18 @@ class GraphCreationTab(tk.Frame):
         if not palette: palette = ["#4878d0", "#ee854a", "#6acc64", "#d65f5f", "#956cb4"]
         return list(itertools.islice(itertools.cycle(palette), subgroups_count))
 
+    def add_custom_color(self):
+        """Opens a color picker and appends the hex code to the custom colors entry."""
+        color = colorchooser.askcolor(title="Choose a Color")[1]
+        if color: # If the user didn't click cancel
+            current = self.var_hex_colors.get().strip()
+            if current:
+                self.var_hex_colors.set(f"{current}, {color}")
+            else:
+                self.var_hex_colors.set(color)
+            # Automatically switch the dropdown to use custom colors
+            self.var_palette.set("Custom HEX List")
+
     def _build_control_widgets(self, parent):
         frame_data = ttk.LabelFrame(parent, text="Step 1: Data Input & Setup")
         frame_data.pack(fill=tk.X, padx=10, pady=5)
@@ -483,7 +496,6 @@ class GraphCreationTab(tk.Frame):
         
         self.txt_data = tk.Text(self.manual_frame, height=8, width=42, font=("Consolas", 9))
         self.txt_data.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        # REMOVED default manual data injection here!
 
         self.file_frame = tk.Frame(self.input_container, bg="#f0f0f0")
         btn_upload = tk.Button(self.file_frame, text="📂 Upload Data File (Excel/CSV)", bg="#e65100", fg="white", 
@@ -524,9 +536,10 @@ class GraphCreationTab(tk.Frame):
         frame_type.pack(fill=tk.X, padx=10, pady=5)
 
         tk.Label(frame_type, text="Chart Mode:").pack(anchor="w", padx=5)
-        self.var_chart_mode = tk.StringVar(value="Grouped Bar + Scatter (Prism)")
-        # Replace the existing Combobox for var_chart_mode
-        ttk.Combobox(frame_type, textvariable=self.var_chart_mode, state="readonly",
+        # Pull the last selected mode from the class variable
+        self.var_chart_mode = tk.StringVar(value=GraphCreationTab.last_selected_mode)
+        
+        cb_chart_mode = ttk.Combobox(frame_type, textvariable=self.var_chart_mode, state="readonly",
                     values=["Grouped Bar + Scatter (Prism)", 
                             "Grouped Bar (Mean + Error Only)", 
                             "Line Graph",
@@ -536,7 +549,13 @@ class GraphCreationTab(tk.Frame):
                             "Split Violin with Data",
                             "Boxplot with Jitter",
                             "Raincloud Plot",
-                            "Paired Slope Plot"]).pack(fill=tk.X, padx=5, pady=2)
+                            "Paired Slope Plot"])
+        cb_chart_mode.pack(fill=tk.X, padx=5, pady=2)
+        
+        # Update the class variable whenever a new layout is chosen
+        def update_session_mode(event):
+            GraphCreationTab.last_selected_mode = self.var_chart_mode.get()
+        cb_chart_mode.bind("<<ComboboxSelected>>", update_session_mode)
 
         tk.Label(frame_type, text="Error Bar Metric:").pack(anchor="w", padx=5)
         self.var_error_type = tk.StringVar(value="SEM (Standard Error)")
@@ -557,7 +576,13 @@ class GraphCreationTab(tk.Frame):
 
         tk.Label(frame_colors, text="Custom Colors (Comma sep):").pack(anchor="w", padx=5)
         self.var_hex_colors = tk.StringVar(value="")
-        tk.Entry(frame_colors, textvariable=self.var_hex_colors).pack(fill=tk.X, padx=5, pady=2)
+        
+        # Sub-frame for Entry + Color Picker Button side-by-side
+        color_input_frame = tk.Frame(frame_colors)
+        color_input_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        tk.Entry(color_input_frame, textvariable=self.var_hex_colors).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(color_input_frame, text="🎨 Pick & Add", command=self.add_custom_color, bg="#e0e0e0").pack(side=tk.LEFT, padx=(5, 0))
 
         tk.Label(frame_colors, text="Hatch Patterns (Comma sep):").pack(anchor="w", padx=5)
         self.var_hatches = tk.StringVar(value="")
