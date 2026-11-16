@@ -1257,21 +1257,21 @@ class QuantificationTab(ttk.Frame):
 
                 # Dynamically scale kernels and windows based on physical resolution
                 if pixel_size and pixel_size > 0:
-                    # 1. Baseline Morphological Kernel (Targeting ~2.5 µm for general noise cleanup)
-                    k_dim = int(2.5 / pixel_size)
-                    k_dim = max(3, k_dim if k_dim % 2 != 0 else k_dim + 1) # Ensure odd integer >= 3
+                    # 1. Baseline Morphological Kernel (~0.4 µm to remove pixel noise without erasing thin axons)
+                    k_dim = int(round(0.4 / pixel_size))
+                    k_dim = max(3, k_dim if k_dim % 2 != 0 else k_dim + 1)
                     
                     # 2. DoG Filter Radii for Fibrillar Mode
-                    # Inner blur preserves the fiber structure (Targeting ~1.0 µm, matching standard 0.2-1.2 µm axon widths)
-                    dog_inner = int(1.0 / pixel_size)
+                    # Inner blur preserves sub-micron fiber structure (~0.4 µm)
+                    dog_inner = int(round(0.4 / pixel_size))
                     dog_inner = max(3, dog_inner if dog_inner % 2 != 0 else dog_inner + 1)
                     
-                    # Outer blur creates the local background (Targeting ~10.0 µm, safely double the thickest 5 µm motor fibers)
-                    dog_outer = int(10.0 / pixel_size)
+                    # Outer blur estimates local background (~10.0 µm)
+                    dog_outer = int(round(10.0 / pixel_size))
                     dog_outer = max(5, dog_outer if dog_outer % 2 != 0 else dog_outer + 1)
                     
-                    # 3. Adaptive Threshold Window (Targeting a ~15.0 µm local neighborhood block)
-                    adapt_win = int(15.0 / pixel_size)
+                    # 3. Adaptive Threshold Window (~15.0 µm local neighborhood)
+                    adapt_win = int(round(15.0 / pixel_size))
                     adapt_win = max(5, adapt_win if adapt_win % 2 != 0 else adapt_win + 1)
 
                 else:
