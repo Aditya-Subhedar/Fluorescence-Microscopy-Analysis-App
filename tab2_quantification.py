@@ -1250,7 +1250,38 @@ class QuantificationTab(ttk.Frame):
                 # Filter pixels strictly within user min/max threshold bounds
                 mask_filtered = cv2.inRange(self.cached_hsv, lower_bound, upper_bound)
                 
-                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                # Fetch pixel size early
+                if state.get('pixel_size_um') in (None, 0.0, 0):
+                    state['pixel_size_um'] = self.get_pixel_size_um(state['file_path'])
+                pixel_size = state['pixel_size_um']
+
+                # Dynamically scale kernels and windows based on physical resolution
+                if pixel_size and pixel_size > 0:
+                    # 1. Baseline Morphological Kernel (Targeting ~2.5 µm for general noise cleanup)
+                    k_dim = int(2.5 / pixel_size)
+                    k_dim = max(3, k_dim if k_dim % 2 != 0 else k_dim + 1) # Ensure odd integer >= 3
+                    
+                    # 2. DoG Filter Radii for Fibrillar Mode
+                    # Inner blur preserves the fiber structure (Targeting ~1.0 µm, matching standard 0.2-1.2 µm axon widths)
+                    dog_inner = int(1.0 / pixel_size)
+                    dog_inner = max(3, dog_inner if dog_inner % 2 != 0 else dog_inner + 1)
+                    
+                    # Outer blur creates the local background (Targeting ~10.0 µm, safely double the thickest 5 µm motor fibers)
+                    dog_outer = int(10.0 / pixel_size)
+                    dog_outer = max(5, dog_outer if dog_outer % 2 != 0 else dog_outer + 1)
+                    
+                    # 3. Adaptive Threshold Window (Targeting a ~15.0 µm local neighborhood block)
+                    adapt_win = int(15.0 / pixel_size)
+                    adapt_win = max(5, adapt_win if adapt_win % 2 != 0 else adapt_win + 1)
+
+                else:
+                    # Fallback for uncalibrated images (legacy fixed-pixel behavior)
+                    k_dim = 5
+                    dog_inner = 3
+                    dog_outer = 15
+                    adapt_win = 11
+
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_dim, k_dim))
                 mask_clean = cv2.morphologyEx(mask_filtered, cv2.MORPH_OPEN, kernel)
                 mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
                 
