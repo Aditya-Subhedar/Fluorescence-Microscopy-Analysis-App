@@ -623,8 +623,6 @@ class GraphCreationTab(tk.Frame):
 
         tk.Label(frame_sig, text="Significance Testing (α = 0.05):").pack(anchor="w", padx=5)
         self.var_stats_mode = tk.StringVar(value="T-Test (Compare to 1st Subgroup)")
-        
-        # ---> FIX: Properly instantiated the cb_stats_mode variable here in Step 7
         cb_stats_mode = ttk.Combobox(frame_sig, textvariable=self.var_stats_mode, state="readonly",
                      values=[
                          "None", 
@@ -637,6 +635,10 @@ class GraphCreationTab(tk.Frame):
                      ])
         cb_stats_mode.pack(fill=tk.X, padx=5, pady=2)
         cb_stats_mode.bind("<<ComboboxSelected>>", lambda e: self.generate_plot())
+
+        self.var_show_ns = tk.BooleanVar(value=True)
+        tk.Checkbutton(frame_sig, text="Show 'ns' brackets (p > 0.05)", variable=self.var_show_ns,
+                       command=self.generate_plot).pack(anchor="w", padx=5, pady=2)
 
         lbl_stats_info = tk.Label(frame_sig, text="* p≤0.05, ** p≤0.01, *** p≤0.001", 
                                   font=("Arial", 8, "italic"), fg="#555", justify=tk.LEFT)
@@ -951,6 +953,7 @@ class GraphCreationTab(tk.Frame):
 
             # --- 5. AUTOMATED STATISTICAL TESTING ---
             stats_mode = self.var_stats_mode.get()
+            show_ns = self.var_show_ns.get() if hasattr(self, 'var_show_ns') else True
             dynamic_bracket_y = highest_data_point * 1.05
             bracket_increment = highest_data_point * 0.10
 
@@ -962,11 +965,9 @@ class GraphCreationTab(tk.Frame):
                     from itertools import groupby
                     from operator import itemgetter
 
-                    # 1. Fit Two-Way ANOVA model
                     df_anova = df.rename(columns={'Value': 'Val', 'Category': 'Cat', 'Subgroup': 'Sub'})
                     model = ols('Val ~ C(Cat) * C(Sub)', data=df_anova).fit()
                     
-                    # 2. Perform post-hoc comparison per category to find significant range
                     sig_indices = []
                     sig_p_vals = []
                     
@@ -977,7 +978,7 @@ class GraphCreationTab(tk.Frame):
                             d2 = cat_df[cat_df["Subgroup"] == subgroups[1]]["Value"].values
                             if len(d1) >= 2 and len(d2) >= 2:
                                 _, p = stats.ttest_ind(d1, d2, equal_var=False)
-                                if p < 0.05:
+                                if p <= 0.05:
                                     sig_indices.append(c_idx)
                                     sig_p_vals.append(p)
                         else:
@@ -985,11 +986,10 @@ class GraphCreationTab(tk.Frame):
                             valid_g = [g for g in group_data if len(g) >= 2]
                             if len(valid_g) == len(subgroups):
                                 _, p = stats.f_oneway(*valid_g)
-                                if p < 0.05:
+                                if p <= 0.05:
                                     sig_indices.append(c_idx)
                                     sig_p_vals.append(p)
 
-                    # 3. Draw Capped Spanning Brackets with Red Stars OR 'ns' Label
                     if sig_indices:
                         ranges = []
                         for k, g in groupby(enumerate(sig_indices), lambda ix: ix[0] - ix[1]):
@@ -997,7 +997,6 @@ class GraphCreationTab(tk.Frame):
 
                         for r_group in ranges:
                             start_idx, end_idx = r_group[0], r_group[-1]
-                            
                             max_y = max([
                                 bar_max_heights.get((categories[i], sub), highest_data_point)
                                 for i in r_group for sub in subgroups
@@ -1007,34 +1006,46 @@ class GraphCreationTab(tk.Frame):
                             cap_h = highest_data_point * 0.03
                             
                             min_p = min([sig_p_vals[sig_indices.index(i)] for i in r_group])
-                            stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
+                            stars = "***" if min_p <= 0.001 else "**" if min_p <= 0.01 else "*"
                             
                             if start_idx == end_idx:
-                                self.ax.plot([start_idx - 0.15, start_idx + 0.15], [y_height, y_height], color='black', lw=1.2)
-                                self.ax.plot([start_idx - 0.15, start_idx - 0.15], [y_height - cap_h, y_height], color='black', lw=1.2)
-                                self.ax.plot([start_idx + 0.15, start_idx + 0.15], [y_height - cap_h, y_height], color='black', lw=1.2)
+                                self.ax.plot([start_idx - 0.15, start_idx + 0.15], [y_height, y_height], color='black', lw=1.2, zorder=10)
+                                self.ax.plot([start_idx - 0.15, start_idx - 0.15], [y_height - cap_h, y_height], color='black', lw=1.2, zorder=10)
+                                self.ax.plot([start_idx + 0.15, start_idx + 0.15], [y_height - cap_h, y_height], color='black', lw=1.2, zorder=10)
                                 x_mid = start_idx
                             else:
-                                self.ax.plot([start_idx, end_idx], [y_height, y_height], color='black', lw=1.2)
-                                self.ax.plot([start_idx, start_idx], [y_height - cap_h, y_height], color='black', lw=1.2)
-                                self.ax.plot([end_idx, end_idx], [y_height - cap_h, y_height], color='black', lw=1.2)
+                                self.ax.plot([start_idx, end_idx], [y_height, y_height], color='black', lw=1.2, zorder=10)
+                                self.ax.plot([start_idx, start_idx], [y_height - cap_h, y_height], color='black', lw=1.2, zorder=10)
+                                self.ax.plot([end_idx, end_idx], [y_height - cap_h, y_height], color='black', lw=1.2, zorder=10)
                                 x_mid = (start_idx + end_idx) / 2.0
                             
                             self.ax.text(x_mid, y_height + (highest_data_point * 0.01), stars, 
-                                         ha='center', va='bottom', color='red', fontsize=label_sz + 2, weight='bold')
+                                         ha='center', va='bottom', color='red', fontsize=label_sz + 2, weight='bold', zorder=10)
                             
                             dynamic_bracket_y = max(dynamic_bracket_y, y_height + cap_h + (highest_data_point * 0.10))
-                    else:
-                        # Fallback label if two-way ANOVA finds no significant differences (p >= 0.05)
-                        self.ax.text(0.5, 0.95, "Two-Way ANOVA: ns (p ≥ 0.05)", transform=self.ax.transAxes,
-                                     ha='center', va='top', color='gray', fontsize=label_sz - 1,
-                                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='lightgray'))
+                    elif show_ns:
+                        y_height = highest_data_point * 1.08
+                        cap_h = highest_data_point * 0.03
+                        self.ax.plot([0, len(categories) - 1], [y_height, y_height], color='black', lw=1.2, zorder=10)
+                        self.ax.plot([0, 0], [y_height - cap_h, y_height], color='black', lw=1.2, zorder=10)
+                        self.ax.plot([len(categories) - 1, len(categories) - 1], [y_height - cap_h, y_height], color='black', lw=1.2, zorder=10)
+                        self.ax.text((len(categories) - 1) / 2.0, y_height + (highest_data_point * 0.01), "ns",
+                                     ha='center', va='bottom', color='black', fontsize=label_sz, zorder=10)
+                        dynamic_bracket_y = max(dynamic_bracket_y, y_height + cap_h + (highest_data_point * 0.10))
 
                 except Exception as e:
                     print(f"Two-Way ANOVA Rendering Error: {e}")
 
             elif stats_mode != "None" and len(subgroups) > 1 and chart_mode not in ["Scatter with Regression", "Paired Slope Plot"]:
-                for cat in categories:
+                pairs_to_test = []
+                if "Compare to 1st" in stats_mode:
+                    pairs_to_test = [(subgroups[0], s) for s in subgroups[1:]]
+                elif "Adjacent Pairs" in stats_mode:
+                    pairs_to_test = [(subgroups[i], subgroups[i+1]) for i in range(len(subgroups)-1)]
+                elif "All Pairwise Combinations" in stats_mode:
+                    pairs_to_test = list(itertools.combinations(subgroups, 2))
+
+                for c_idx, cat in enumerate(categories):
                     cat_df = df[df["Category"] == cat]
                     bracket_level = 0
                     
@@ -1044,29 +1055,18 @@ class GraphCreationTab(tk.Frame):
                         if len(valid_groups) > 1:
                             try:
                                 f_stat, p_val = stats.f_oneway(*valid_groups)
-                                sig_text = f"ANOVA p={p_val:.4f}" + (" *" if p_val <= 0.05 else "ns")
+                                sig_text = f"ANOVA p={p_val:.4f}" + (" *" if p_val <= 0.05 else " ns")
                                 x_center = np.mean([bar_positions[(cat, s)] for s in subgroups])
                                 y_height = max([bar_max_heights[(cat, s)] for s in subgroups]) + (highest_data_point * 0.05)
-                                self.ax.text(x_center, y_height, sig_text, ha='center', va='bottom', color='black', fontsize=label_sz)
+                                self.ax.text(x_center, y_height, sig_text, ha='center', va='bottom', color='black', fontsize=label_sz, zorder=10)
                                 dynamic_bracket_y = max(dynamic_bracket_y, y_height + bracket_increment)
                             except Exception: 
                                 pass
-
                     else:
-                        pairs_to_test = []
-                        if "Compare to 1st" in stats_mode:
-                            control_sub = subgroups[0]
-                            pairs_to_test = [(control_sub, s) for s in subgroups[1:]]
-                        elif "Adjacent Pairs" in stats_mode:
-                            pairs_to_test = [(subgroups[i], subgroups[i+1]) for i in range(len(subgroups)-1)]
-                        elif "All Pairwise Combinations" in stats_mode:
-                            pairs_to_test = list(itertools.combinations(subgroups, 2))
-
                         for (sub1, sub2) in pairs_to_test:
                             data1 = cat_df[cat_df["Subgroup"] == sub1]["Value"].values
                             data2 = cat_df[cat_df["Subgroup"] == sub2]["Value"].values
                             
-                            # Protect against zero-variance and insufficient sample sizes
                             if len(data1) < 2 or len(data2) < 2: continue
                             if np.var(data1) == 0 and np.var(data2) == 0: continue
                             
@@ -1076,24 +1076,43 @@ class GraphCreationTab(tk.Frame):
                                 else:
                                     stat_val, p_val = stats.ttest_ind(data1, data2, equal_var=False)
 
-                                sig_text = "***" if p_val <= 0.001 else "**" if p_val <= 0.01 else "*" if p_val <= 0.05 else ""
+                                if p_val <= 0.001:
+                                    sig_text = "***"
+                                elif p_val <= 0.01:
+                                    sig_text = "**"
+                                elif p_val <= 0.05:
+                                    sig_text = "*"
+                                else:
+                                    sig_text = "ns" if show_ns else ""
                                 
                                 if sig_text:
-                                    x1, x2 = bar_positions[(cat, sub1)], bar_positions[(cat, sub2)]
+                                    i1, i2 = subgroups.index(sub1), subgroups.index(sub2)
+                                    if chart_mode == "Line Graph":
+                                        span = 0.18 if n_subs == 2 else 0.12
+                                        x1 = c_idx + (i1 - (n_subs - 1) / 2) * span
+                                        x2 = c_idx + (i2 - (n_subs - 1) / 2) * span
+                                    elif chart_mode in ["Split Violin with Data", "Boxplot with Jitter"]:
+                                        dodge_step = 0.8 / n_subs
+                                        x1 = c_idx + (i1 - (n_subs - 1) / 2) * dodge_step
+                                        x2 = c_idx + (i2 - (n_subs - 1) / 2) * dodge_step
+                                    else:
+                                        x1, x2 = bar_positions[(cat, sub1)], bar_positions[(cat, sub2)]
+
                                     local_max = max(bar_max_heights[(cat, sub1)], bar_max_heights[(cat, sub2)])
+                                    y_height = local_max + (highest_data_point * 0.06) + (bracket_level * bracket_increment)
+                                    bracket_h = highest_data_point * 0.025
                                     
-                                    y_height = local_max + (highest_data_point * 0.05) + (bracket_level * bracket_increment)
-                                    bracket_h = highest_data_point * 0.02
-                                    
-                                    # Draw bracket lines only for non-line-graph plots
-                                    if chart_mode != "Line Graph":
-                                        self.ax.plot([x1, x1, x2, x2], [y_height-bracket_h, y_height, y_height, y_height-bracket_h], lw=1.2, c='black')
-                                    self.ax.text((x1+x2)*.5, y_height, sig_text, ha='center', va='bottom', color='black', fontsize=label_sz, weight='bold')
+                                    self.ax.plot([x1, x1, x2, x2], [y_height - bracket_h, y_height, y_height, y_height - bracket_h],
+                                                 lw=1.2, c='black', zorder=10)
+                                    self.ax.text((x1 + x2) * 0.5, y_height + (highest_data_point * 0.005), sig_text,
+                                                 ha='center', va='bottom', color='black',
+                                                 fontsize=label_sz if sig_text != "ns" else label_sz - 1,
+                                                 weight='bold' if sig_text != "ns" else 'normal', zorder=10)
                                     
                                     dynamic_bracket_y = max(dynamic_bracket_y, y_height + bracket_increment)
                                     bracket_level += 1
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                print(f"Stats Rendering Error: {e}")
 
             # --- 6. UNIFIED AXES & SPINES SETUP ---
             if chart_mode not in ["Scatter with Regression", "Paired Slope Plot"]:
